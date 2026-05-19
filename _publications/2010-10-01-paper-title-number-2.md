@@ -1,0 +1,14 @@
+---
+title: "PRINCE Cipher and eFUSE-based Embedded Encryption System for Optical Nerve Stimulator"
+collection: publications
+category: manuscripts
+permalink: https://ieeexplore.ieee.org/abstract/document/10637962
+excerpt: 'The use of miniaturized wireless biomedical devices is expanding rapidly. Despite their limited size, power, processing, and storage capabilities, these devices must maintain a minimum level of security to protect against constantly evolving threats. This work presents a 16-bit on-chip embedded encryption system for secure data communication and authentication in an implanted optical nerve stimulator, utilizing eFUSE, PRINCE cipher, hash functions, and error detection code. The foundry-provided eFUSE silicon intellectual property (IP) is modified to accommodate different operating modes and further mitigates the supply voltage drop problem during sensing that causes premature resetting. We also propose an area-constrained resource-sharing-based ASIC implementation of the PRINCE cipher architecture without modifying the arithmetic results of the encryption-decryption process. The area and power consumption of the PRINCE cipher are reduced by 2.7 and 5.1 times, respectively, due to modification while maintaining a substantial cipher strength. The proposed cipher performed at par with the existing ASIC implementations of the PRINCE cipher in throughput and area-based form factor. The entire encryption block and the optical nerve stimulator were fabricated in 0.18 μm BCDlite process, and measurement results showed correct encrypted bi-directional data transmission and stimulation when powered by wirelessly transferred power. The developed encrypted implant performed well in comparison to wirelessly powered neural stimulators (implants) and secured wirelessly powered IOT architectures.'
+date: 2024-08-05
+venue: 'IEEE Sensors Journal/2022 IEEE International Symposium on Circuits and Systems (ISCAS)'
+slidesurl: 'https://ieeexplore.ieee.org/abstract/document/10637962'
+paperurl: 'https://ieeexplore.ieee.org/abstract/document/10637962'
+citation: 'S. Sarkar, J. Jiang, C. -Y. Tsui and W. -H. Ki, "PRINCE Cipher and eFUSE-based Embedded Encryption System for Optical Nerve Stimulator," in IEEE Sensors Journal, doi: 10.1109/JSEN.2024.3439614.'
+---
+
+The contents above will be part of a list of publications, if the user clicks the link for the publication than the contents of section will be rendered as a full page, allowing you to provide more information about the paper for the reader. When publications are displayed as a single page, the contents of the above "citation" field will automatically be included below this section in a smaller font.
