@@ -1,0 +1,53 @@
+general:
+  trainset_x_path:
+  - db/idu_output/ISA_FP_func.pkl
+  - db/idu_output/ISA_INT_func.pkl
+  - db/idu_output/ISA_LS_func.pkl
+  - db/idu_output/ISA_THEAD_func.pkl
+  - db/idu_output/MMU_func.pkl
+  - db/idu_output/cache_func.pkl
+  - db/idu_output/conv_softmax_func.pkl
+  - db/idu_output/conv_softmax_part000_c906_float16_func.pkl
+  - db/idu_output/conv_softmax_part000_c906_float32_func.pkl
+  - db/idu_output/conv_softmax_part000_c906_int8_sym_func.pkl
+  - db/idu_output/csr_func.pkl
+  - db/idu_output/debug_func.pkl
+  - db/idu_output/exception_func.pkl
+  - db/idu_output/interrupt_func.pkl
+  testset_x_path: []
+  y_path:
+  - db/pwr/ISA_FP_pwr.pkl
+  - db/pwr/ISA_INT_pwr.pkl
+  - db/pwr/ISA_LS_pwr.pkl
+  - db/pwr/ISA_THEAD_pwr.pkl
+  - db/pwr/MMU_pwr.pkl
+  - db/pwr/cache_pwr.pkl
+  - db/pwr/conv_softmax_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_float16_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_float32_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_int8_sym_pwr.pkl
+  - db/pwr/csr_pwr.pkl
+  - db/pwr/debug_pwr.pkl
+  - db/pwr/exception_pwr.pkl
+  - db/pwr/interrupt_pwr.pkl
+  y_label: /openC906/Pc(x_aq_top_0_x_aq_core_x_aq_idu_top)
+  seed: 42
+preprocessing:
+  drop_zero_var: true
+  train_val_test_ratio:
+  - 0.8
+  - 0.1
+  - 0.1
+  avg_wsize: 128
+feature_selection:
+  algorithm: deep
+  top_k: 20
+  hyperparams:
+    deep: {}
+regression:
+  algorithm: ElasticNetCV
+  intercept_on: true
+  non_negative_coef_only: true
+  hpo_timeout: 300
+  hyperparams:
+    ElasticNetCV: {}
