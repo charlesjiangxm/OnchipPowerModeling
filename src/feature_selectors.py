@@ -1,12 +1,16 @@
-"""
-Pluggable feature selection for the c906 RuleFit pipeline.
+"""Pluggable feature selection.
 
-Standardizes features in float64 (eliminating the wide-bus float32 overflow
-that the previous `filter_features` worked around with errstate guards),
-then dispatches to one of 8 selection methods chosen via `--fs_method`:
+Input is assumed to be **pre-standardized** by the pipeline (z-scored on
+the training split). Zero-variance columns and NaN/inf cells are also the
+pipeline's responsibility (``preprocess.drop_zero_variance`` and
+``data.assert_finite``), so this module no longer re-standardizes,
+re-imputes, or guards against float32 overflow.
 
-  pearson      legacy behavior -- rank by |Pearson r| with the target
-  variance     drop low-variance cols, keep top-K by raw variance (not y-aware)
+Dispatches to one of 8 selection methods chosen via the ``method`` arg:
+
+  pearson      rank by |Pearson r| with the target
+  variance     rank by raw variance (DEGENERATE on pre-standardized input;
+               all columns have var=1 by construction, kept for API parity)
   univariate   sklearn SelectKBest with f_regression / mutual_info_regression
   rfe          sklearn RFE with a Ridge estimator
   from_model   sklearn SelectFromModel with LassoCV or RandomForest
@@ -15,8 +19,8 @@ then dispatches to one of 8 selection methods chosen via `--fs_method`:
   deep         DEEP two-step: MCP prune to V_I, then forward + swap best-subset
                (Xie et al. ICCAD'22)
 
-All methods return a list[str] of original (non-standardized) column names,
-length <= top_k, ordered best-first where the method defines an ordering.
+All methods return a list[str] of original column names, length <= top_k,
+ordered best-first where the method defines an ordering.
 """
 
 import functools
@@ -463,104 +467,62 @@ class FeatureSelector:
         self.scores_ = None
 
     @classmethod
-    def from_args(cls, args):
-        """Build from a c906_rulefit.py argparse Namespace."""
+    def from_config_dict(cls, method, top_k, hyperparams, seed=42, n_jobs=-1, verbose=True):
+        """Build from a YAML config block.
+
+        ``method`` is the algorithm name; ``top_k`` is the target count;
+        ``hyperparams`` is a mapping ``{method_name: {key: value, ...}}``
+        from which only the entry for ``method`` is consulted.
+        """
+        hp = (hyperparams or {}).get(method, {}) or {}
         return cls(
-            method=args.fs_method,
-            top_k=args.top_k,
-            score_func=getattr(args, "fs_score_func", "f_regression"),
-            variance_threshold=getattr(args, "fs_variance_threshold", 0.0),
-            rfe_step=getattr(args, "fs_rfe_step", 0.1),
-            from_model_estimator=getattr(args, "fs_from_model_estimator", "lasso"),
-            from_model_max_iter=getattr(args, "fs_from_model_max_iter", 5000),
-            sfs_tol=getattr(args, "fs_sfs_tol", 1e-4),
-            mcp_gamma=getattr(args, "fs_mcp_gamma", 5.0),
-            mcp_positive=getattr(args, "fs_mcp_positive", False),
-            mcp_max_iter=getattr(args, "fs_mcp_max_iter", 200),
-            mcp_tol=getattr(args, "fs_mcp_tol", 1e-5),
-            mcp_lambda_path_len=getattr(args, "fs_mcp_lambda_path_len", 50),
-            deep_v_i_multiplier=getattr(args, "fs_deep_v_i_multiplier", 3),
-            deep_max_swap_iters=getattr(args, "fs_deep_max_swap_iters", 20),
-            n_jobs=getattr(args, "fs_n_jobs", -1),
-            random_state=getattr(args, "seed", 42),
+            method=method,
+            top_k=top_k,
+            score_func=hp.get("score_func", "f_regression"),
+            variance_threshold=float(hp.get("variance_threshold", 0.0)),
+            rfe_step=hp.get("step", 0.1),
+            from_model_estimator=hp.get("estimator", "lasso"),
+            from_model_max_iter=int(hp.get("max_iter", 5000)),
+            sfs_tol=float(hp.get("tol", 1e-4)),
+            mcp_gamma=float(hp.get("gamma", 5.0)),
+            mcp_positive=bool(hp.get("positive", False)),
+            mcp_max_iter=int(hp.get("max_iter", 200)),
+            mcp_tol=float(hp.get("tol", 1e-5)),
+            mcp_lambda_path_len=int(hp.get("lambda_path_len", 50)),
+            deep_v_i_multiplier=int(hp.get("v_i_multiplier", 3)),
+            deep_max_swap_iters=int(hp.get("max_swap_iters", 20)),
+            n_jobs=int(n_jobs),
+            random_state=int(seed),
+            verbose=verbose,
         )
 
     # ----- main entry point -------------------------------------------------
 
     def fit_select(self, X_train, y_train):
-        """Run the configured method. Returns selected column names."""
+        """Run the configured method on pre-standardized (X, y).
+
+        ``X_train`` is the train DataFrame z-scored upstream (zero mean,
+        unit std per column on the training rows); ``y_train`` is the
+        z-scored target Series. Returns the selected column names.
+        """
         t0 = time.time()
         if not isinstance(X_train, pd.DataFrame):
             raise TypeError("X_train must be a pandas DataFrame")
+        self.nonconst_cols_ = X_train.columns
+        Xz = X_train.to_numpy(dtype=np.float64, copy=False)
+
         y_arr = np.asarray(y_train, dtype=np.float64)
-
-        # 1. Drop zero-variance columns on the raw data. Use pandas std,
-        # which skips NaN -- an all-NaN column gets std=NaN, which fails > 0
-        # and is dropped here. Partially-NaN columns survive and are imputed
-        # in step 1b.
-        stds_raw = X_train.std(axis=0, ddof=0).to_numpy()
-        nonconst_mask = (stds_raw > 0) & np.isfinite(stds_raw)
-        if not nonconst_mask.any():
-            raise RuntimeError(
-                "All training feature columns are constant; nothing to select."
-            )
-        self.nonconst_cols_ = X_train.columns[nonconst_mask]
-        X_nc = X_train[self.nonconst_cols_].to_numpy(dtype=np.float64, copy=True)
-
-        # 1a. Impute NaN with 0. Some presim layouts (presim_large/) contain
-        # NaN entries representing "X" (unknown / floating) signal states.
-        # For switching-activity features, "no toggle observed" = 0 is the
-        # natural fill.
-        n_nan = int(np.isnan(X_nc).sum())
-        if n_nan:
-            X_nc = np.nan_to_num(X_nc, nan=0.0, copy=False)
-            if self.verbose:
-                print(f"  [FeatureSelector] imputed {n_nan} NaN cells to 0 "
-                      f"({100.0 * n_nan / X_nc.size:.2f}% of matrix).")
-
-        # 1b. Drop columns whose raw values exceed float32 dynamic range:
-        # downstream RuleFit's internal GradientBoostingRegressor casts to
-        # float32 and would turn those values into +inf. The legacy
-        # filter_features hit this implicitly via NaN correlations on
-        # overflowing float32 cov computations; with float64 standardization
-        # we have to filter explicitly.
-        float32_max = float(np.finfo(np.float32).max)
-        abs_max = np.max(np.abs(X_nc), axis=0)
-        fits_f32 = abs_max < float32_max
-        n_huge = int((~fits_f32).sum())
-        if n_huge:
-            self.nonconst_cols_ = self.nonconst_cols_[fits_f32]
-            X_nc = X_nc[:, fits_f32]
-            if self.verbose:
-                print(f"  [FeatureSelector] dropped {n_huge} wide-bus columns "
-                      f"exceeding float32 dynamic range (would overflow inside "
-                      f"RuleFit's GBRT).")
-        if X_nc.shape[1] == 0:
-            raise RuntimeError(
-                "No feature columns survived zero-variance + float32-range filter."
-            )
-        p_nc = X_nc.shape[1]
-
-        # 2. Standardize in float64 (fixes the wide-bus overflow root cause).
-        self.feature_means_ = X_nc.mean(axis=0)
-        self.feature_stds_ = X_nc.std(axis=0, ddof=0)
-        # Belt-and-braces: nothing should be zero here after step 1, but the
-        # division would NaN if it were.
-        self.feature_stds_[self.feature_stds_ == 0] = 1.0
-        Xz = (X_nc - self.feature_means_) / self.feature_stds_
-
         y_mean = float(y_arr.mean())
-        y_std = float(y_arr.std(ddof=0)) + 1e-12
+        y_std = float(y_arr.std(ddof=0)) or 1.0
         yc = y_arr - y_mean
         yz = yc / y_std
 
         if self.verbose:
             print(f"  [FeatureSelector method={self.method}] "
-                  f"n={X_nc.shape[0]}, p={p_nc} after zero-var drop "
-                  f"({(~nonconst_mask).sum()} columns dropped)  "
+                  f"n={Xz.shape[0]}, p={Xz.shape[1]}  "
                   f"[n_jobs={self.n_jobs}, mcp_backend={_MCP_BACKEND}]")
 
-        # 3. Dispatch.
+        # Dispatch. X_nc and Xz are the same here (pre-standardized input).
         dispatch = {
             "pearson":    self._select_pearson,
             "variance":   self._select_variance,
@@ -571,7 +533,7 @@ class FeatureSelector:
             "mcp":        self._select_mcp,
             "deep":       self._select_deep,
         }
-        local_idx = dispatch[self.method](Xz, X_nc, yc, yz, y_arr)
+        local_idx = dispatch[self.method](Xz, Xz, yc, yz, y_arr)
 
         # local_idx is a list of column indices into self.nonconst_cols_,
         # already ranked best-first, capped to top_k by the method.
@@ -598,8 +560,18 @@ class FeatureSelector:
         return top_idx.tolist()
 
     def _select_variance(self, Xz, X_nc, yc, yz, y_arr):
-        # On the RAW (non-standardized) features. y not used.
+        # DEGENERATE on pre-standardized inputs (every column has variance 1).
+        # Kept for API parity; ranks by argsort, which falls back to original
+        # column order.
         vars_raw = X_nc.var(axis=0, ddof=0)
+        if np.allclose(vars_raw, 1.0, atol=1e-3):
+            warnings.warn(
+                "FeatureSelector(method='variance') on pre-standardized input is "
+                "degenerate; selection reduces to the first top_k columns in "
+                "their original order. Consider 'pearson' / 'univariate' / 'mcp' "
+                "instead.",
+                stacklevel=2,
+            )
         survivor_mask = vars_raw > self.variance_threshold
         survivor_idx = np.flatnonzero(survivor_mask)
         if survivor_idx.size == 0:

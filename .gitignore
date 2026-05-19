@@ -3,12 +3,20 @@ _site/
 
 # Ignore the directory for local files during development
 local/
+db/
 
 # Ignore the Gemfile that is generated
 Gemfile.lock
-__MACOSX/
 
 # Ingore files created by npm
 node_modules
 package-lock.json
-db
+
+# ignore macos related directories
+__MACOSX/
+.DS_STORE
+
+# python bytecode and run outputs
+__pycache__/
+*.pyc
+output/

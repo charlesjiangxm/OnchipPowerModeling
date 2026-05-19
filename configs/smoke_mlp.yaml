@@ -1,0 +1,24 @@
+general:
+  trainset_x_path: [db/ifu_output/MMU_func.pkl]
+  testset_x_path: [db/ifu_output/csr_func.pkl]
+  y_path: [db/pwr/MMU_pwr.pkl, db/pwr/csr_pwr.pkl]
+  y_label: "/Pc(openC906)"
+  seed: 42
+
+preprocessing:
+  drop_zero_var: true
+  train_val_test_ratio: [0.8, 0.1, 0.1]
+  avg_wsize: 1
+
+feature_selection:
+  algorithm: pearson
+  top_k: 20
+  hyperparams: {pearson: {}}
+
+regression:
+  algorithm: MLP
+  intercept_on: false
+  non_negative_coef_only: false
+  hpo_timeout: 30
+  hyperparams:
+    MLP: {batch_size: 128, max_epochs: 30, patience: 10}

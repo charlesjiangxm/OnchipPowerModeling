@@ -1,0 +1,58 @@
+# Canonical example for src/pipeline.py.
+#
+# Paths are resolved relative to the repo root. The runner writes outputs to
+# <repo_root>/output/<config_stem>_<timestamp>/.
+
+general:
+  trainset_x_path:
+    - db/MMU_func.pkl
+    - db/cache_func.pkl
+    - db/csr_func.pkl
+    - db/exception_func.pkl
+  testset_x_path:
+    - db/interrupt_func.pkl
+  y_path:
+    - db/MMU_pwr.pkl
+    - db/cache_pwr.pkl
+    - db/csr_pwr.pkl
+    - db/exception_pwr.pkl
+    - db/interrupt_pwr.pkl
+  y_label: "/Pc(openC906)"
+  seed: 42
+
+preprocessing:
+  drop_zero_var: true
+  # If testset_x_path is empty: ratios apply to the concatenated train set.
+  # If testset_x_path is non-empty: val takes (val + test) fraction of train,
+  # test is the full testset_x_path concatenation.
+  train_val_test_ratio: [0.8, 0.1, 0.1]
+  avg_wsize: 1
+
+feature_selection:
+  algorithm: pearson           # null to bypass
+  top_k: 1000
+  hyperparams:
+    pearson: {}
+    variance: {variance_threshold: 0.0}
+    univariate: {score_func: f_regression}
+    rfe: {step: 0.1}
+    from_model: {estimator: lasso, max_iter: 5000}
+    sequential: {tol: 1.0e-4}
+    mcp:  {gamma: 5.0, positive: false, max_iter: 200, tol: 1.0e-5, lambda_path_len: 50}
+    deep: {gamma: 5.0, positive: false, max_iter: 200, tol: 1.0e-5, lambda_path_len: 50, v_i_multiplier: 3, max_swap_iters: 20}
+
+regression:
+  algorithm: ElasticNetCV      # RuleFit | FT-Transformer | GBDT | MLP | ElasticNetCV
+  intercept_on: true           # honored by RuleFit, ElasticNetCV
+  non_negative_coef_only: false
+  hpo_timeout: 600             # seconds
+
+  # Searchable hyper-parameters are declared per-model in src/models/<name>.py
+  # via hpo_space(). Scalar values here PIN a key (skip its search dimension);
+  # otherwise the default search ranges apply.
+  hyperparams:
+    RuleFit:        {tree_size: 4, max_rules: 2000, memory_par: 0.01}
+    ElasticNetCV:   {n_alphas: 20, l1_ratio: [0.1, 0.3, 0.5, 0.7, 0.9], cv: 5}
+    GBDT:           {tree_method: hist, n_jobs: -1}
+    MLP:            {batch_size: 256, max_epochs: 300, patience: 40}
+    FT-Transformer: {batch_size: 256, max_epochs: 300, patience: 40}
