@@ -1,0 +1,55 @@
+general:
+  trainset_x_path:
+  - db/rtu/rtu_input/ISA_FP_func.pkl
+  - db/rtu/rtu_input/ISA_INT_func.pkl
+  - db/rtu/rtu_input/ISA_LS_func.pkl
+  - db/rtu/rtu_input/ISA_THEAD_func.pkl
+  - db/rtu/rtu_input/MMU_func.pkl
+  - db/rtu/rtu_input/cache_func.pkl
+  - db/rtu/rtu_input/conv_softmax_func.pkl
+  - db/rtu/rtu_input/conv_softmax_part000_c906_float16_func.pkl
+  - db/rtu/rtu_input/conv_softmax_part000_c906_float32_func.pkl
+  - db/rtu/rtu_input/conv_softmax_part000_c906_int8_sym_func.pkl
+  - db/rtu/rtu_input/coremark_func.pkl
+  - db/rtu/rtu_input/csr_func.pkl
+  - db/rtu/rtu_input/debug_func.pkl
+  - db/rtu/rtu_input/exception_func.pkl
+  - db/rtu/rtu_input/interrupt_func.pkl
+  testset_x_path: []
+  y_path:
+  - db/pwr/ISA_FP_pwr.pkl
+  - db/pwr/ISA_INT_pwr.pkl
+  - db/pwr/ISA_LS_pwr.pkl
+  - db/pwr/ISA_THEAD_pwr.pkl
+  - db/pwr/MMU_pwr.pkl
+  - db/pwr/cache_pwr.pkl
+  - db/pwr/conv_softmax_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_float16_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_float32_pwr.pkl
+  - db/pwr/conv_softmax_part000_c906_int8_sym_pwr.pkl
+  - db/pwr/coremark_pwr.pkl
+  - db/pwr/csr_pwr.pkl
+  - db/pwr/debug_pwr.pkl
+  - db/pwr/exception_pwr.pkl
+  - db/pwr/interrupt_pwr.pkl
+  y_label: x_aq_core/Pc(x_aq_rtu_top)
+  seed: 42
+preprocessing:
+  drop_zero_var: true
+  train_val_test_ratio:
+  - 0.8
+  - 0.1
+  - 0.1
+  avg_wsize: 128
+feature_selection:
+  algorithm: univariate
+  top_k: 20
+  hyperparams:
+    univariate: {}
+regression:
+  algorithm: ElasticNetCV
+  intercept_on: false
+  non_negative_coef_only: true
+  hpo_timeout: 300
+  hyperparams:
+    ElasticNetCV: {}

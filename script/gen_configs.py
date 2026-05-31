@@ -1,7 +1,9 @@
 #!/usr/bin/env python
-"""Generate YAML configs for the IDU/IFU power-modeling sweep.
+"""Generate YAML configs for the power-modeling sweep.
 
-Writes <folder> x <fs_method> x <model> YAML files into ../configs/.
+Writes <feature-folder> x <fs_method> x <model> YAML files into ../configs/.
+Existing YAML configs are removed first so the directory mirrors the current
+db layout exactly.
 """
 from __future__ import annotations
 
@@ -11,15 +13,20 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIGS_DIR = REPO_ROOT / "configs"
+DB_DIR = REPO_ROOT / "db"
 
-FOLDERS = [
-    "idu_input",
-    "idu_net",
-    "idu_output",
-    "ifu_input",
-    "ifu_net",
-    "ifu_output",
-]
+BLOCK_TARGETS = {
+    "cp0": "x_aq_core/Pc(x_aq_cp0_top)",
+    "idu": "x_aq_core/Pc(x_aq_idu_top)",
+    "ifu": "x_aq_core/Pc(x_aq_ifu_top)",
+    "iu": "x_aq_core/Pc(x_aq_iu_top)",
+    "lsu": "x_aq_core/Pc(x_aq_lsu_top)",
+    "rtu": "x_aq_core/Pc(x_aq_rtu_top)",
+    "vidu": "x_aq_core/Pc(x_aq_vidu_top)",
+    "vpu": "x_aq_core/Pc(x_aq_vpu_top)",
+}
+
+KINDS = ("input", "net", "output")
 
 BENCHMARKS = [
     "ISA_FP",
@@ -32,6 +39,7 @@ BENCHMARKS = [
     "conv_softmax_part000_c906_float16",
     "conv_softmax_part000_c906_float32",
     "conv_softmax_part000_c906_int8_sym",
+    "coremark",
     "csr",
     "debug",
     "exception",
@@ -57,9 +65,6 @@ MODELS = {
     "ElasticNetCV": "elasticnet",
 }
 
-IDU_TARGET = "/openC906/Pc(x_aq_top_0_x_aq_core_x_aq_idu_top)"
-IFU_TARGET = "/openC906/Pc(x_aq_top_0_x_aq_core_x_aq_ifu_top)"
-
 TOP_K = 20
 AVG_WSIZE = 128
 HPO_TIMEOUT = 300
@@ -67,23 +72,28 @@ SEED = 42
 RATIO = [0.8, 0.1, 0.1]
 
 
-def y_label_for(folder: str) -> str:
-    if folder.startswith("idu"):
-        return IDU_TARGET
-    if folder.startswith("ifu"):
-        return IFU_TARGET
-    raise ValueError(f"unexpected folder: {folder}")
+def feature_folders() -> list[tuple[str, str, Path]]:
+    """Return (block, folder_name, relative_path) entries in deterministic order."""
+    folders: list[tuple[str, str, Path]] = []
+    for block in BLOCK_TARGETS:
+        for kind in KINDS:
+            folder = f"{block}_{kind}"
+            rel_path = Path("db") / block / folder
+            if not (REPO_ROOT / rel_path).is_dir():
+                raise FileNotFoundError(f"feature folder not found: {REPO_ROOT / rel_path}")
+            folders.append((block, folder, rel_path))
+    return folders
 
 
-def build_config(folder: str, fs_method: str, model: str) -> dict:
-    trainset = [f"db/{folder}/{stem}_func.pkl" for stem in BENCHMARKS]
+def build_config(block: str, rel_folder: Path, fs_method: str, model: str) -> dict:
+    trainset = [str(rel_folder / f"{stem}_func.pkl") for stem in BENCHMARKS]
     y_paths = [f"db/pwr/{stem}_pwr.pkl" for stem in BENCHMARKS]
     return {
         "general": {
             "trainset_x_path": trainset,
             "testset_x_path": [],
             "y_path": y_paths,
-            "y_label": y_label_for(folder),
+            "y_label": BLOCK_TARGETS[block],
             "seed": SEED,
         },
         "preprocessing": {
@@ -106,17 +116,27 @@ def build_config(folder: str, fs_method: str, model: str) -> dict:
     }
 
 
+def remove_existing_configs() -> int:
+    count = 0
+    for path in CONFIGS_DIR.glob("*.yaml"):
+        path.unlink()
+        count += 1
+    return count
+
+
 def main() -> None:
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    removed = remove_existing_configs()
     count = 0
-    for folder in FOLDERS:
+    for block, folder, rel_folder in feature_folders():
         for fs_method in FS_METHODS:
             for model, slug in MODELS.items():
-                cfg = build_config(folder, fs_method, model)
+                cfg = build_config(block, rel_folder, fs_method, model)
                 out = CONFIGS_DIR / f"{folder}_{fs_method}_{slug}.yaml"
                 with out.open("w") as fh:
                     yaml.safe_dump(cfg, fh, sort_keys=False, default_flow_style=False)
                 count += 1
+    print(f"removed {removed} existing configs")
     print(f"wrote {count} configs to {CONFIGS_DIR}")
 
 
