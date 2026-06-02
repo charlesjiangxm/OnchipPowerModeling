@@ -4,6 +4,10 @@
 An experiment is one module/proxy-kind pair, for example ``idu_input``.
 Within each experiment, each feature-selection/model combination is one setup,
 for example ``pearson_gbdt`` or ``from_model_ft_transformer``.
+
+Example:
+python script/plot_experiment_metrics.py --plots-dir plot
+
 """
 
 from __future__ import annotations
