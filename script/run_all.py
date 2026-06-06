@@ -1,9 +1,16 @@
 #!/usr/bin/env python
-"""Submit all YAML regression configs to Slurm with bounded concurrency.
+"""Submit unfinished YAML regression configs as node-scoped Slurm workers.
 
-The runner discovers configs under ``configs/``, routes torch-based models to
-GPU nodes and the remaining models to CPU nodes, then keeps at most
-``--max-active`` jobs from this sweep in Slurm at a time.
+The runner discovers configs under ``configs/`` and assigns them across four
+user-configurable CPU/GPU workers. Each worker is one Slurm job on a single node
+and runs up to ``--jobs-per-node`` configs concurrently.
+
+Example - CPU only:
+python script/run_all.py --node-partitions cpu-share,cpu-share,cpu-share,cpu-share --jobs-per-node 2
+
+Example - CPU & GPU:
+python script/run_all.py --node-partitions cpu-share,cpu-share,gpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer"
+
 """
 
 from __future__ import annotations
@@ -15,18 +22,27 @@ import re
 import shlex
 import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-GPU_ALGORITHMS = {"MLP", "FT-Transformer"}
-TERMINAL_PLACEHOLDER = "LEFT_QUEUE"
+# GPU_ALGORITHMS = {"MLP", "FT-Transformer"}
+GPU_ALGORITHMS: set[str] = set()
+CPU_PARTITION = "cpu-share"
+GPU_PARTITION = "gpu-share"
+GPU_GRES = "gpu:1"
+NODE_COUNT = 4
+DEFAULT_NODE_PARTITIONS = (
+    GPU_PARTITION,
+    GPU_PARTITION,
+    CPU_PARTITION,
+    CPU_PARTITION,
+)
+DEFAULT_JOBS_PER_NODE = 1
 DONE_LOG_RE = re.compile(r"INFO\s+pipeline\s+::\s+done:\s+(.+?report\.md)\s*$")
 
 
@@ -52,16 +68,26 @@ class SkippedJob:
     report: Path
 
 
-@dataclass
-class SubmittedJob:
-    config: str
-    algorithm: str
+@dataclass(frozen=True)
+class WorkerBatch:
+    name: str
     partition: str
+    needs_gpu: bool
+    index: int
+    jobs: list[ConfigJob]
+
+
+@dataclass
+class SubmittedBatch:
+    name: str
+    partition: str
+    needs_gpu: bool
+    index: int
+    assigned_count: int
+    assigned_configs: list[str]
     job_id: str
     sbatch: str
-    state: str
     submitted_at: str
-    updated_at: str
 
 
 def main() -> int:
@@ -73,24 +99,28 @@ def main() -> int:
 
     all_jobs = discover_configs(
         configs_dir=configs_dir,
-        gpu_partition=args.gpu_partition,
-        cpu_partition=args.cpu_partition,
+        gpu_algorithms=args.gpu_algorithms,
+        node_partitions=args.node_partitions,
     )
     if not all_jobs:
         raise SystemExit(f"No YAML configs found under {configs_dir}")
 
     pending_jobs, skipped_jobs = skip_finished_jobs(all_jobs, output_root)
     unfinished_count = len(pending_jobs)
-    if args.limit is not None:
-        pending_jobs = pending_jobs[: args.limit]
+    batches = build_worker_batches(
+        jobs=pending_jobs,
+        node_partitions=args.node_partitions,
+    )
 
     print_summary(
-        jobs=pending_jobs,
+        batches=batches,
         skipped_jobs=skipped_jobs,
         total_configs=len(all_jobs),
         unfinished_count=unfinished_count,
-        args=args,
         python_exe=python_exe,
+        jobs_per_node=args.jobs_per_node,
+        node_partitions=args.node_partitions,
+        gpu_algorithms=args.gpu_algorithms,
     )
     print_skipped_jobs(skipped_jobs)
     if not pending_jobs:
@@ -100,92 +130,52 @@ def main() -> int:
         return 0
 
     if args.dry_run:
-        print_dry_run(pending_jobs, args, scheduler_dir, output_root, python_exe)
+        print_dry_run(batches, args, scheduler_dir, output_root, python_exe)
         return 0
 
     scheduler_dir.mkdir(parents=True, exist_ok=True)
     (scheduler_dir / "sbatch").mkdir(parents=True, exist_ok=True)
     (scheduler_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    submitted: list[SubmittedJob] = []
-    pending = list(pending_jobs)
-    active_ids: set[str] = set()
+    submitted: list[SubmittedBatch] = []
     manifest_path = scheduler_dir / "manifest.json"
-
-    def submit_until_full() -> None:
-        while pending and len(active_ids) < args.max_active:
-            job = pending.pop(0)
-            submitted_job = submit_job(
-                job=job,
-                args=args,
-                scheduler_dir=scheduler_dir,
-                output_root=output_root,
-                python_exe=python_exe,
-            )
-            submitted.append(submitted_job)
-            active_ids.add(submitted_job.job_id)
-            write_manifest(
-                manifest_path=manifest_path,
-                scheduler_dir=scheduler_dir,
-                jobs=submitted,
-                args=args,
-                python_exe=python_exe,
-            )
-            print(
-                f"submitted {submitted_job.job_id} "
-                f"({submitted_job.partition}) {submitted_job.config}"
-            )
-
-    submit_until_full()
-    while active_ids:
-        print(
-            f"active={len(active_ids)} pending_configs={len(pending)} "
-            f"submitted={len(submitted)}/{len(pending_jobs)}"
+    for batch in batches:
+        if not batch.jobs:
+            continue
+        submitted_batch = submit_batch(
+            batch=batch,
+            args=args,
+            scheduler_dir=scheduler_dir,
+            output_root=output_root,
+            python_exe=python_exe,
         )
-        time.sleep(args.poll_interval)
-        states = query_squeue(active_ids)
-        now = timestamp()
-        for record in submitted:
-            if record.job_id not in active_ids:
-                continue
-            state = states.get(record.job_id, TERMINAL_PLACEHOLDER)
-            record.state = state
-            record.updated_at = now
-        active_ids = set(states)
-        submit_until_full()
+        submitted.append(submitted_batch)
         write_manifest(
             manifest_path=manifest_path,
             scheduler_dir=scheduler_dir,
-            jobs=submitted,
+            batches=submitted,
             args=args,
             python_exe=python_exe,
         )
+        print(
+            f"submitted {submitted_batch.job_id} "
+            f"({submitted_batch.partition}) {submitted_batch.name}: "
+            f"{submitted_batch.assigned_count} config(s)"
+        )
 
-    print(f"all jobs have left the Slurm queue; manifest: {manifest_path}")
+    print(f"submitted {len(submitted)} worker job(s); manifest: {manifest_path}")
     return 0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Submit every YAML config under configs/ to Slurm."
+        description="Submit unfinished YAML configs as four node-scoped Slurm workers."
     )
     parser.add_argument(
         "--configs-dir",
         type=Path,
         default=Path("configs"),
         help="Directory containing YAML configs (default: configs).",
-    )
-    parser.add_argument(
-        "--max-active",
-        type=positive_int,
-        default=50,
-        help="Maximum active jobs from this sweep (default: 50).",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=positive_int,
-        default=180,
-        help="Seconds between Slurm queue polls (default: 180).",
     )
     parser.add_argument(
         "--output-root",
@@ -199,30 +189,38 @@ def parse_args() -> argparse.Namespace:
         help="SBATCH wall time, e.g. 12:00:00 or 1-00:00:00 (default: 1-00:00:00).",
     )
     parser.add_argument(
-        "--gpu-partition",
-        default="gpu-share",
-        help="Partition for MLP and FT-Transformer configs (default: gpu-share).",
-    )
-    parser.add_argument(
-        "--cpu-partition",
-        default="cpu-share",
-        help="Partition for non-torch configs (default: cpu-share).",
-    )
-    parser.add_argument(
-        "--gpu-gres",
-        default="gpu:1",
-        help="GRES request for GPU jobs (default: gpu:1).",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned submissions and an example sbatch script without sbatch.",
     )
     parser.add_argument(
-        "--limit",
+        "--jobs-per-node",
         type=positive_int,
-        default=None,
-        help="Only process the first N configs, useful for smoke tests.",
+        default=DEFAULT_JOBS_PER_NODE,
+        help=(
+            "Maximum configs to run concurrently inside each worker "
+            f"(default: {DEFAULT_JOBS_PER_NODE})."
+        ),
+    )
+    parser.add_argument(
+        "--node-partitions",
+        type=parse_node_partitions,
+        default=DEFAULT_NODE_PARTITIONS,
+        help=(
+            "Comma-separated partitions for the four worker nodes. Each entry "
+            f"must be {CPU_PARTITION!r} or {GPU_PARTITION!r} "
+            f"(default: {','.join(DEFAULT_NODE_PARTITIONS)})."
+        ),
+    )
+    parser.add_argument(
+        "--gpu-algorithms",
+        type=parse_gpu_algorithms,
+        default=set(GPU_ALGORITHMS),
+        help=(
+            "Comma-separated regression.algorithm names to route to GPU nodes "
+            "when both CPU and GPU nodes are configured, e.g. "
+            "MLP,FT-Transformer. Defaults to the GPU_ALGORITHMS constant."
+        ),
     )
     return parser.parse_args()
 
@@ -234,6 +232,36 @@ def positive_int(value: str) -> int:
     return parsed
 
 
+def parse_node_partitions(value: str) -> tuple[str, ...]:
+    partitions = tuple(part.strip() for part in value.split(","))
+    if len(partitions) != NODE_COUNT:
+        raise argparse.ArgumentTypeError(
+            f"must contain exactly {NODE_COUNT} comma-separated partitions"
+        )
+    if any(not partition for partition in partitions):
+        raise argparse.ArgumentTypeError("partitions must not be empty")
+
+    allowed = {CPU_PARTITION, GPU_PARTITION}
+    invalid = sorted(set(partitions) - allowed)
+    if invalid:
+        allowed_text = ", ".join(sorted(allowed))
+        invalid_text = ", ".join(invalid)
+        raise argparse.ArgumentTypeError(
+            f"invalid partition(s): {invalid_text}; allowed: {allowed_text}"
+        )
+    return partitions
+
+
+def parse_gpu_algorithms(value: str) -> set[str]:
+    if not value.strip():
+        return set()
+
+    algorithms = [algorithm.strip() for algorithm in value.split(",")]
+    if any(not algorithm for algorithm in algorithms):
+        raise argparse.ArgumentTypeError("algorithm names must not be empty")
+    return set(algorithms)
+
+
 def resolve_repo_path(path: Path) -> Path:
     return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
 
@@ -241,8 +269,8 @@ def resolve_repo_path(path: Path) -> Path:
 def discover_configs(
     *,
     configs_dir: Path,
-    gpu_partition: str,
-    cpu_partition: str,
+    gpu_algorithms: set[str],
+    node_partitions: tuple[str, ...],
 ) -> list[ConfigJob]:
     if not configs_dir.is_dir():
         raise FileNotFoundError(f"configs directory not found: {configs_dir}")
@@ -251,16 +279,97 @@ def discover_configs(
     jobs: list[ConfigJob] = []
     for config_path in paths:
         algorithm = read_algorithm(config_path)
-        needs_gpu = algorithm in GPU_ALGORITHMS
+        needs_gpu = route_to_gpu(
+            algorithm=algorithm,
+            gpu_algorithms=gpu_algorithms,
+            node_partitions=node_partitions,
+        )
         jobs.append(
             ConfigJob(
                 config=config_path,
                 algorithm=algorithm,
-                partition=gpu_partition if needs_gpu else cpu_partition,
+                partition=GPU_PARTITION if needs_gpu else CPU_PARTITION,
                 needs_gpu=needs_gpu,
             )
         )
     return jobs
+
+
+def route_to_gpu(
+    *,
+    algorithm: str,
+    gpu_algorithms: set[str],
+    node_partitions: tuple[str, ...],
+) -> bool:
+    mode = gpu_routing_mode(node_partitions)
+    if mode == "all":
+        return True
+    if mode == "none":
+        return False
+    return algorithm in gpu_algorithms
+
+
+def gpu_routing_mode(node_partitions: tuple[str, ...]) -> str:
+    has_gpu_node = GPU_PARTITION in node_partitions
+    has_cpu_node = CPU_PARTITION in node_partitions
+    if has_gpu_node and not has_cpu_node:
+        return "all"
+    if has_cpu_node and not has_gpu_node:
+        return "none"
+    return "selected"
+
+
+def describe_gpu_routing(
+    *,
+    gpu_algorithms: set[str],
+    node_partitions: tuple[str, ...],
+) -> str:
+    mode = gpu_routing_mode(node_partitions)
+    if mode == "all":
+        return f"all algorithms (no {CPU_PARTITION} nodes configured)"
+    if mode == "none":
+        return f"none (no {GPU_PARTITION} nodes configured)"
+    if not gpu_algorithms:
+        return "(none)"
+    return ", ".join(sorted(gpu_algorithms))
+
+
+def build_worker_batches(
+    *,
+    jobs: list[ConfigJob],
+    node_partitions: tuple[str, ...],
+) -> list[WorkerBatch]:
+    buckets: list[list[ConfigJob]] = [[] for _ in node_partitions]
+    node_indexes = {
+        True: [
+            idx for idx, partition in enumerate(node_partitions)
+            if partition == GPU_PARTITION
+        ],
+        False: [
+            idx for idx, partition in enumerate(node_partitions)
+            if partition == CPU_PARTITION
+        ],
+    }
+    assigned_counts = {True: 0, False: 0}
+
+    for job in jobs:
+        indexes = node_indexes[job.needs_gpu]
+        if not indexes:
+            raise ValueError(f"no worker node available for {job.partition}")
+        bucket_idx = indexes[assigned_counts[job.needs_gpu] % len(indexes)]
+        buckets[bucket_idx].append(job)
+        assigned_counts[job.needs_gpu] += 1
+
+    return [
+        WorkerBatch(
+            name=f"node-{idx + 1}-{'gpu' if partition == GPU_PARTITION else 'cpu'}",
+            partition=partition,
+            needs_gpu=partition == GPU_PARTITION,
+            index=idx + 1,
+            jobs=bucket,
+        )
+        for idx, (partition, bucket) in enumerate(zip(node_partitions, buckets))
+    ]
 
 
 def skip_finished_jobs(
@@ -343,25 +452,48 @@ def read_algorithm(config_path: Path) -> str:
 
 def print_summary(
     *,
-    jobs: list[ConfigJob],
+    batches: list[WorkerBatch],
     skipped_jobs: list[SkippedJob],
     total_configs: int,
     unfinished_count: int,
-    args: argparse.Namespace,
     python_exe: Path,
+    jobs_per_node: int,
+    node_partitions: tuple[str, ...],
+    gpu_algorithms: set[str],
 ) -> None:
-    gpu_count = sum(job.needs_gpu for job in jobs)
-    cpu_count = len(jobs) - gpu_count
+    gpu_count = sum(len(batch.jobs) for batch in batches if batch.needs_gpu)
+    cpu_count = sum(len(batch.jobs) for batch in batches if not batch.needs_gpu)
+    worker_count = sum(1 for batch in batches if batch.jobs)
+    configured_gpu_workers = sum(
+        1 for partition in node_partitions if partition == GPU_PARTITION
+    )
+    configured_cpu_workers = sum(
+        1 for partition in node_partitions if partition == CPU_PARTITION
+    )
+    gpu_routing_text = describe_gpu_routing(
+        gpu_algorithms=gpu_algorithms,
+        node_partitions=node_partitions,
+    )
     print(f"repo root: {REPO_ROOT}")
     print(f"python: {python_exe}")
     print(
         f"configs: {total_configs} total; {len(skipped_jobs)} finished skipped; "
         f"{unfinished_count} unfinished"
     )
-    if args.limit is not None:
-        print(f"limit: first {len(jobs)} unfinished config(s)")
-    print(f"to submit: {len(jobs)} total ({gpu_count} gpu, {cpu_count} cpu)")
-    print(f"max active jobs: {args.max_active}")
+    print(f"pending pools: {gpu_count} gpu config(s), {cpu_count} cpu config(s)")
+    print(
+        f"worker slots: {configured_gpu_workers} {GPU_PARTITION} + "
+        f"{configured_cpu_workers} {CPU_PARTITION}; {jobs_per_node} jobs/worker"
+    )
+    print(f"node layout: {', '.join(node_partitions)}")
+    print(f"gpu routing: {gpu_routing_text}")
+    print(f"worker jobs to submit: {worker_count}")
+    for batch in batches:
+        gres = f", gres={GPU_GRES}" if batch.needs_gpu else ""
+        print(
+            f"  {batch.name}: {len(batch.jobs)} config(s) "
+            f"on {batch.partition}{gres}"
+        )
 
 
 def print_skipped_jobs(skipped_jobs: list[SkippedJob], max_items: int = 20) -> None:
@@ -386,42 +518,54 @@ def display_path(path: Path) -> Path:
 
 
 def print_dry_run(
-    jobs: list[ConfigJob],
+    batches: list[WorkerBatch],
     args: argparse.Namespace,
     scheduler_dir: Path,
     output_root: Path,
     python_exe: Path,
 ) -> None:
     print("dry run: no sbatch commands will be executed")
-    for job in jobs:
-        rel_config = job.config.relative_to(REPO_ROOT)
-        gres = f" --gres={args.gpu_gres}" if job.needs_gpu else ""
-        print(f"{rel_config} -> -p {job.partition}{gres}")
+    for batch in batches:
+        action = "submit" if batch.jobs else "skip empty"
+        gres = f" --gres={GPU_GRES}" if batch.needs_gpu else ""
+        print(
+            f"{action}: {batch.name} -> -p {batch.partition}{gres} "
+            f"({len(batch.jobs)} config(s))"
+        )
+        for job in batch.jobs[:5]:
+            rel_config = display_path(job.config)
+            print(f"  {rel_config} ({job.algorithm})")
+        remaining = len(batch.jobs) - 5
+        if remaining > 0:
+            print(f"  ... {remaining} more")
 
-    first = jobs[0]
+    first = next((batch for batch in batches if batch.jobs), None)
+    if first is None:
+        return
+
     script = render_sbatch(
-        job=first,
+        batch=first,
         args=args,
         scheduler_dir=scheduler_dir,
         output_root=output_root,
         python_exe=python_exe,
     )
-    print("\nexample sbatch script for first config:\n")
+    print(f"\nexample sbatch script for {first.name}:\n")
     print(script)
 
 
-def submit_job(
+def submit_batch(
     *,
-    job: ConfigJob,
+    batch: WorkerBatch,
     args: argparse.Namespace,
     scheduler_dir: Path,
     output_root: Path,
     python_exe: Path,
-) -> SubmittedJob:
-    sbatch_path = scheduler_dir / "sbatch" / f"{safe_stem(job.config)}.sbatch"
+) -> SubmittedBatch:
+    sbatch_path = scheduler_dir / "sbatch" / f"{safe_job_name(batch.name)}.sbatch"
     sbatch_path.write_text(
         render_sbatch(
-            job=job,
+            batch=batch,
             args=args,
             scheduler_dir=scheduler_dir,
             output_root=output_root,
@@ -438,37 +582,37 @@ def submit_job(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"sbatch failed for {job.config}\n"
+            f"sbatch failed for {batch.name}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
 
     job_id = parse_sbatch_job_id(result.stdout)
     now = timestamp()
-    return SubmittedJob(
-        config=str(job.config.relative_to(REPO_ROOT)),
-        algorithm=job.algorithm,
-        partition=job.partition,
+    return SubmittedBatch(
+        name=batch.name,
+        partition=batch.partition,
+        needs_gpu=batch.needs_gpu,
+        index=batch.index,
+        assigned_count=len(batch.jobs),
+        assigned_configs=[str(display_path(job.config)) for job in batch.jobs],
         job_id=job_id,
         sbatch=str(sbatch_path),
-        state="SUBMITTED",
         submitted_at=now,
-        updated_at=now,
     )
 
 
 def render_sbatch(
     *,
-    job: ConfigJob,
+    batch: WorkerBatch,
     args: argparse.Namespace,
     scheduler_dir: Path,
     output_root: Path,
     python_exe: Path,
 ) -> str:
-    rel_config = job.config.relative_to(REPO_ROOT)
     log_dir = scheduler_dir / "logs"
-    log_base = safe_stem(job.config)
-    job_name = safe_job_name(f"opm_{job.config.stem}")
+    log_base = safe_job_name(batch.name)
+    job_name = safe_job_name(f"opm_{batch.name}")
     python_dir = python_exe.parent
     conda_prefix = os.environ.get("CONDA_PREFIX", "")
     if not conda_prefix and python_dir.name == "bin":
@@ -479,11 +623,13 @@ def render_sbatch(
         f"#SBATCH --job-name={job_name}",
         f"#SBATCH --output={log_dir / (log_base + '.%j.out')}",
         f"#SBATCH --error={log_dir / (log_base + '.%j.err')}",
-        f"#SBATCH -p {job.partition}",
+        f"#SBATCH -p {batch.partition}",
+        "#SBATCH --nodes=1",
+        f"#SBATCH --ntasks={args.jobs_per_node}",
         f"#SBATCH --time={args.time}",
     ]
-    if job.needs_gpu:
-        lines.append(f"#SBATCH --gres={args.gpu_gres}")
+    if batch.needs_gpu:
+        lines.append(f"#SBATCH --gres={GPU_GRES}")
 
     lines.extend(
         [
@@ -497,17 +643,61 @@ def render_sbatch(
     if conda_prefix:
         lines.append(f"export CONDA_PREFIX={shlex.quote(conda_prefix)}")
 
-    lines.append(
-        " ".join(
-            [
-                shlex.quote(str(python_exe)),
-                shlex.quote(str(REPO_ROOT / "script" / "run_fit.py")),
-                "--config",
-                shlex.quote(str(rel_config)),
-                "--output-root",
-                shlex.quote(str(output_root)),
-            ]
-        )
+    lines.extend(["", "configs=("])
+    for job in batch.jobs:
+        lines.append(f"  {shlex.quote(str(display_path(job.config)))}")
+    lines.extend(
+        [
+            ")",
+            "",
+            f"max_parallel={args.jobs_per_node}",
+            "active=0",
+            "status=0",
+            "",
+            "run_config() {",
+            "  local config=\"$1\"",
+            "  echo \"[$(date --iso-8601=seconds)] start ${config}\"",
+            "  if "
+            + " ".join(
+                [
+                    shlex.quote(str(python_exe)),
+                    shlex.quote(str(REPO_ROOT / "script" / "run_fit.py")),
+                    "--config",
+                    "\"$config\"",
+                    "--output-root",
+                    shlex.quote(str(output_root)),
+                ]
+            )
+            + "; then",
+            "    echo \"[$(date --iso-8601=seconds)] done ${config}\"",
+            "  else",
+            "    rc=$?",
+            "    echo \"[$(date --iso-8601=seconds)] failed ${config} rc=${rc}\" >&2",
+            "    return \"${rc}\"",
+            "  fi",
+            "}",
+            "",
+            "for config in \"${configs[@]}\"; do",
+            "  run_config \"${config}\" &",
+            "  active=$((active + 1))",
+            "  echo \"launched ${config}; running=$(jobs -rp | wc -l)\"",
+            "  if (( active >= max_parallel )); then",
+            "    if ! wait -n; then",
+            "      status=1",
+            "    fi",
+            "    active=$((active - 1))",
+            "  fi",
+            "done",
+            "",
+            "while (( active > 0 )); do",
+            "  if ! wait -n; then",
+            "    status=1",
+            "  fi",
+            "  active=$((active - 1))",
+            "done",
+            "",
+            "exit \"${status}\"",
+        ]
     )
     return "\n".join(lines) + "\n"
 
@@ -519,37 +709,11 @@ def parse_sbatch_job_id(stdout: str) -> str:
     return match.group(1)
 
 
-def query_squeue(job_ids: Iterable[str]) -> dict[str, str]:
-    ids = sorted(set(job_ids), key=int)
-    if not ids:
-        return {}
-    result = subprocess.run(
-        ["squeue", "-h", "-j", ",".join(ids), "-o", "%i|%T"],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"squeue failed for job ids {','.join(ids)}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
-
-    states: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        job_id, state = line.split("|", 1)
-        states[job_id.strip()] = state.strip()
-    return states
-
-
 def write_manifest(
     *,
     manifest_path: Path,
     scheduler_dir: Path,
-    jobs: list[SubmittedJob],
+    batches: list[SubmittedBatch],
     args: argparse.Namespace,
     python_exe: Path,
 ) -> None:
@@ -559,17 +723,30 @@ def write_manifest(
         "repo_root": str(REPO_ROOT),
         "scheduler_dir": str(scheduler_dir),
         "python": str(python_exe),
-        "max_active": args.max_active,
-        "poll_interval": args.poll_interval,
-        "jobs": [asdict(job) for job in jobs],
+        "configs_dir": str(resolve_repo_path(args.configs_dir)),
+        "output_root": str(resolve_repo_path(args.output_root)),
+        "time": args.time,
+        "node_count": NODE_COUNT,
+        "node_partitions": list(args.node_partitions),
+        "jobs_per_node": args.jobs_per_node,
+        "partitions": {
+            "cpu": CPU_PARTITION,
+            "gpu": GPU_PARTITION,
+        },
+        "gpu_algorithms": sorted(args.gpu_algorithms),
+        "gpu_routing": {
+            "mode": gpu_routing_mode(args.node_partitions),
+            "description": describe_gpu_routing(
+                gpu_algorithms=args.gpu_algorithms,
+                node_partitions=args.node_partitions,
+            ),
+        },
+        "gpu_gres": GPU_GRES,
+        "batches": [asdict(batch) for batch in batches],
     }
     tmp_path = manifest_path.with_suffix(".json.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     tmp_path.replace(manifest_path)
-
-
-def safe_stem(path: Path) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", path.stem)
 
 
 def safe_job_name(name: str) -> str:

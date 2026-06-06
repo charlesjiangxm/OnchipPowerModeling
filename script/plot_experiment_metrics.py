@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Plot per-experiment test R2 and RMSE bar charts from completed run reports.
+"""Plot per-experiment R2 and RMSE curves from completed run reports.
 
 An experiment is one module/proxy-kind pair, for example ``idu_input``.
 Within each experiment, each feature-selection/model combination is one setup,
@@ -111,8 +111,8 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Scan output/*/report.md and plot test R2 and RMSE bar charts "
-            "for each module/proxy-kind experiment."
+            "Scan output/*/report.md and plot train/val/test R2 and RMSE "
+            "curves for each module/proxy-kind experiment."
         )
     )
     parser.add_argument(
@@ -346,8 +346,8 @@ def plot_all(records: list[RunRecord], plots_dir: Path) -> list[Path]:
                 ordered,
                 metric="r2",
                 ylabel="R2",
-                title=f"{experiment}: test R2",
-                out_path=plots_dir / f"{experiment}_r2.png",
+                title=f"{experiment}: train/val/test R2",
+                out_path=plots_dir / "r2" / f"{experiment}_r2.png",
             )
         )
         written.append(
@@ -355,8 +355,8 @@ def plot_all(records: list[RunRecord], plots_dir: Path) -> list[Path]:
                 ordered,
                 metric="rmse",
                 ylabel="RMSE",
-                title=f"{experiment}: test RMSE",
-                out_path=plots_dir / f"{experiment}_rmse.png",
+                title=f"{experiment}: train/val/test RMSE",
+                out_path=plots_dir / "rmse" / f"{experiment}_rmse.png",
             )
         )
     return written
@@ -380,57 +380,38 @@ def plot_metric(
     fig_width = max(9.0, 0.45 * len(records) + 3.0)
     fig, ax = plt.subplots(figsize=(fig_width, 5.2))
 
-    y_values = [record.metrics["test"][metric] for record in records]
-    bars = ax.bar(x_values, y_values, width=0.72, color="#4c78a8")
-    annotate_bars(ax, bars, y_values, metric)
+    for split in SPLITS:
+        y_values = [record.metrics[split][metric] for record in records]
+        ax.scatter(x_values, y_values, s=18, label=split)
+        if split == "test":
+            for x_value, y_value in zip(x_values, y_values):
+                ax.annotate(
+                    format_metric_label(metric, y_value),
+                    xy=(x_value, y_value),
+                    xytext=(0, -10),
+                    textcoords="offset points",
+                    ha="center",
+                    va="top",
+                    fontsize=7,
+                    annotation_clip=False,
+                )
 
     ax.set_xticks(x_values)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax.set_xlabel("setup (sorted by test R2 descending)")
-    ax.set_ylabel(f"test {ylabel}")
+    ax.set_ylabel(ylabel)
     ax.set_title(title)
+    ax.margins(y=0.15)
     ax.grid(True, axis="y", alpha=0.3)
+    ax.legend()
     fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     return out_path
 
 
-def annotate_bars(
-    ax: plt.Axes,
-    bars: Iterable[matplotlib.patches.Rectangle],
-    values: list[float],
-    metric: str,
-) -> None:
-    finite_values = [value for value in values if math.isfinite(value)]
-    if not finite_values:
-        return
-
-    y_min, y_max = min(0.0, min(finite_values)), max(0.0, max(finite_values))
-    y_span = y_max - y_min or 1.0
-    offset = y_span * 0.015
-    ax.set_ylim(y_min - y_span * 0.08, y_max + y_span * 0.16)
-
-    for bar, value in zip(bars, values):
-        if not math.isfinite(value):
-            continue
-        va = "bottom" if value >= 0 else "top"
-        y_pos = value + offset if value >= 0 else value - offset
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y_pos,
-            format_bar_value(value, metric),
-            ha="center",
-            va=va,
-            rotation=90,
-            fontsize=6,
-            fontfamily="monospace",
-        )
-
-
-def format_bar_value(value: float, metric: str) -> str:
-    if metric == "r2":
-        return f"{value:.3f}"
+def format_metric_label(metric: str, value: float) -> str:
     return f"{value:.3g}"
 
 
