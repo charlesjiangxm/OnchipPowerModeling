@@ -26,7 +26,7 @@ BLOCK_TARGETS = {
     "vpu": "x_aq_core/Pc(x_aq_vpu_top)",
 }
 
-KINDS = ("input", "net", "output")
+KINDS = ("input", "internal", "net", "output")
 
 BENCHMARKS = [
     "ISA_FP",
@@ -108,7 +108,7 @@ def build_config(block: str, rel_folder: Path, fs_method: str, model: str) -> di
         },
         "regression": {
             "algorithm": model,
-            "intercept_on": True,
+            "intercept_on": False,
             "non_negative_coef_only": True,
             "hpo_timeout": HPO_TIMEOUT,
             "hyperparams": {model: {}},

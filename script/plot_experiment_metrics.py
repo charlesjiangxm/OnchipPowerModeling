@@ -6,7 +6,7 @@ Within each experiment, each feature-selection/model combination is one setup,
 for example ``pearson_gbdt`` or ``from_model_ft_transformer``.
 
 Example:
-python script/plot_experiment_metrics.py --plots-dir plot
+python script/plot_experiment_metrics.py
 
 """
 
@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-KINDS = ("input", "net", "output")
+KINDS = ("input", "output", "internal")
 FS_METHODS = (
     "from_model",
     "sequential",
@@ -68,9 +68,7 @@ class RunRecord:
 def main() -> int:
     args = parse_args()
     output_root = resolve_repo_path(args.output_root)
-    plots_dir = resolve_repo_path(args.plots_dir) if args.plots_dir else (
-        output_root / "experiment_metric_plots"
-    )
+    plots_dir = resolve_repo_path(args.plots_dir)
 
     if not output_root.is_dir():
         raise SystemExit(f"output root not found: {output_root}")
@@ -124,11 +122,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plots-dir",
         type=Path,
-        default=None,
-        help=(
-            "Directory for generated plots "
-            "(default: <output-root>/experiment_metric_plots)."
-        ),
+        default=Path("plot"),
+        help="Directory for generated plots (default: plot).",
     )
     parser.add_argument(
         "--modules",
@@ -398,6 +393,13 @@ def plot_metric(
 
     ax.set_xticks(x_values)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    for tick_label, label in zip(ax.get_xticklabels(), labels):
+        if "rulefit" in label:
+            tick_label.set_color("red")
+        elif "elasticnet" in label:
+            tick_label.set_color("grey")
+        elif "gbdt" in label:
+            tick_label.set_color("mediumpurple")
     ax.set_xlabel("setup (sorted by test R2 descending)")
     ax.set_ylabel(ylabel)
     ax.set_title(title)

@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 """Submit unfinished YAML regression configs as node-scoped Slurm workers.
 
-The runner discovers configs under ``configs/`` and assigns them across four
+The runner discovers configs under ``configs/`` and assigns them across
 user-configurable CPU/GPU workers. Each worker is one Slurm job on a single node
-and runs up to ``--jobs-per-node`` configs concurrently.
+and runs up to ``--jobs-per-node`` configs concurrently. ``--node-count`` must
+match the number of comma-separated entries in ``--node-partitions``.
 
 Example - CPU only:
-python script/run_all.py --node-partitions cpu-share,cpu-share,cpu-share,cpu-share --jobs-per-node 2
+python script/run_all.py --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
 
 Example - CPU & GPU:
-python script/run_all.py --node-partitions cpu-share,cpu-share,gpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer"
+python script/run_all.py --node-count 4 --node-partitions cpu-share,cpu-share,gpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 2
 
 """
 
@@ -169,7 +170,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Submit unfinished YAML configs as four node-scoped Slurm workers."
+        description="Submit unfinished YAML configs as node-scoped Slurm workers."
     )
     parser.add_argument(
         "--configs-dir",
@@ -203,11 +204,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--node-count",
+        type=positive_int,
+        default=NODE_COUNT,
+        help=(
+            "Number of worker nodes to configure. Must match the number of "
+            f"entries in --node-partitions (default: {NODE_COUNT})."
+        ),
+    )
+    parser.add_argument(
         "--node-partitions",
         type=parse_node_partitions,
         default=DEFAULT_NODE_PARTITIONS,
         help=(
-            "Comma-separated partitions for the four worker nodes. Each entry "
+            "Comma-separated partitions for the worker nodes. Each entry "
             f"must be {CPU_PARTITION!r} or {GPU_PARTITION!r} "
             f"(default: {','.join(DEFAULT_NODE_PARTITIONS)})."
         ),
@@ -222,7 +232,9 @@ def parse_args() -> argparse.Namespace:
             "MLP,FT-Transformer. Defaults to the GPU_ALGORITHMS constant."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    validate_node_count(args)
+    return args
 
 
 def positive_int(value: str) -> int:
@@ -234,10 +246,6 @@ def positive_int(value: str) -> int:
 
 def parse_node_partitions(value: str) -> tuple[str, ...]:
     partitions = tuple(part.strip() for part in value.split(","))
-    if len(partitions) != NODE_COUNT:
-        raise argparse.ArgumentTypeError(
-            f"must contain exactly {NODE_COUNT} comma-separated partitions"
-        )
     if any(not partition for partition in partitions):
         raise argparse.ArgumentTypeError("partitions must not be empty")
 
@@ -250,6 +258,19 @@ def parse_node_partitions(value: str) -> tuple[str, ...]:
             f"invalid partition(s): {invalid_text}; allowed: {allowed_text}"
         )
     return partitions
+
+
+def validate_node_count(args: argparse.Namespace) -> None:
+    partition_count = len(args.node_partitions)
+    if args.node_count == partition_count:
+        return
+
+    print(
+        f"Fatal: --node-count ({args.node_count}) must match "
+        f"the number of --node-partitions ({partition_count})",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 def parse_gpu_algorithms(value: str) -> set[str]:
@@ -726,7 +747,7 @@ def write_manifest(
         "configs_dir": str(resolve_repo_path(args.configs_dir)),
         "output_root": str(resolve_repo_path(args.output_root)),
         "time": args.time,
-        "node_count": NODE_COUNT,
+        "node_count": args.node_count,
         "node_partitions": list(args.node_partitions),
         "jobs_per_node": args.jobs_per_node,
         "partitions": {
