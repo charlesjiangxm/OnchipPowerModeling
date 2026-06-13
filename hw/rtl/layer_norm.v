@@ -44,20 +44,29 @@ module layer_norm #(
     parameter RECIP_FRAC = 24,   // reciprocal fractional bits (1/std precision)
     parameter OUT_FRAC   = 7,    // output fractional bits (=FRAC_BITS => strict Q1.7)
     parameter EPS_V      = 168,  // integer epsilon = round(eps*2^(2*FRAC)*D^2), eps=1e-5
+    parameter N_BANK     = 1,    // resident weight banks (1 => unbanked; ports below ignored)
     // ---- derived (do not override) ----
-    parameter ADDR_W     = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN)
+    parameter ADDR_W     = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN),
+    parameter BANK_W     = ($clog2(N_BANK) < 1) ? 1 : $clog2(N_BANK)
 ) (
     input  wire                              clk,
     input  wire                              rst_n,       // async assert, sync deassert
     input  wire                              wr_en,       // coefficient write strobe
     input  wire                              wr_is_beta,  // 0=gamma, 1=beta
+    input  wire [BANK_W-1:0]                 wr_bank,     // weight bank to write (init load; tied 0 when N_BANK=1)
     input  wire [ADDR_W-1:0]                 wr_addr,     // lane index i
     input  wire [DATA_WIDTH-1:0]             wr_data,     // signed int8 coefficient
+    input  wire [BANK_W-1:0]                 bank_sel,    // weight bank to read this token (hold stable per invocation)
     input  wire                              in_valid,    // x_vec valid this cycle
     input  wire [D_TOKEN*DATA_WIDTH-1:0]     x_vec,       // packed: x[i] = x_vec[i*W +: W]
     output wire                              out_valid,   // y_vec valid
     output wire [D_TOKEN*DATA_WIDTH-1:0]     y_vec        // packed: y[i] = y_vec[i*W +: W]
 );
+
+    // When unbanked (N_BANK=1) force the index to 0 so the wr_bank/bank_sel
+    // ports may be left unconnected -- existing instantiations stay unchanged.
+    wire [BANK_W-1:0] rd_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : bank_sel;
+    wire [BANK_W-1:0] wb_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : wr_bank;
 
     // ---- derived sizes (sized to hold EXACT values, no truncation) ----
     localparam CLOG2_D  = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN);
@@ -131,13 +140,13 @@ module layer_norm #(
     endfunction
 
     // ---- coefficient register file (FF-based, write-only port) --------
-    reg signed [DATA_WIDTH-1:0] gamma_mem [0:D_TOKEN-1];
-    reg signed [DATA_WIDTH-1:0] beta_mem  [0:D_TOKEN-1];
+    reg signed [DATA_WIDTH-1:0] gamma_mem [0:N_BANK-1][0:D_TOKEN-1];
+    reg signed [DATA_WIDTH-1:0] beta_mem  [0:N_BANK-1][0:D_TOKEN-1];
 
     always_ff @(posedge clk) begin
         if (wr_en) begin
-            if (wr_is_beta) beta_mem[wr_addr]  <= wr_data;
-            else            gamma_mem[wr_addr] <= wr_data;
+            if (wr_is_beta) beta_mem[wb_bank][wr_addr]  <= wr_data;
+            else            gamma_mem[wb_bank][wr_addr] <= wr_data;
         end
     end
 
@@ -240,8 +249,8 @@ module layer_norm #(
                 znormr4[gi] <= $signed(num_c) * $signed({1'b0, invr3});
 
             // stage 5: affine multiply-add then requantize to int8
-            always_comb acc_c = $signed(znormr4[gi]) * $signed(gamma_mem[gi])
-                                + align_beta(beta_mem[gi]);
+            always_comb acc_c = $signed(znormr4[gi]) * $signed(gamma_mem[rd_bank][gi])
+                                + align_beta(beta_mem[rd_bank][gi]);
             always_ff @(posedge clk)
                 y_q[gi] <= requant(acc_c);
 

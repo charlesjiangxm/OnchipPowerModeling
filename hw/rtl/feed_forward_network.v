@@ -48,24 +48,32 @@ module feed_forward_network #(
     parameter D_FFN      = 64,   // F: hidden width (Linear1 out / Linear2 in)
     parameter DATA_WIDTH = 8,    // int8
     parameter FRAC_BITS  = 7,    // Q1.7
+    parameter N_BANK     = 1,    // resident weight banks (1 => unbanked; ports below ignored)
     // ---- derived (do not override) ----
     parameter W1_DEPTH   = D_FFN * D_TOKEN,   // Linear1.weight (F,E) row-major
     parameter W2_DEPTH   = D_TOKEN * D_FFN,   // Linear2.weight (E,F) row-major
     parameter WSEL_W     = 2,
     parameter MAXW_DEPTH = (W1_DEPTH > W2_DEPTH) ? W1_DEPTH : W2_DEPTH,
-    parameter WADDR_W    = ($clog2(MAXW_DEPTH) < 1) ? 1 : $clog2(MAXW_DEPTH)
+    parameter WADDR_W    = ($clog2(MAXW_DEPTH) < 1) ? 1 : $clog2(MAXW_DEPTH),
+    parameter BANK_W     = ($clog2(N_BANK) < 1) ? 1 : $clog2(N_BANK)
 ) (
     input  wire                          clk,
     input  wire                          rst_n,    // async assert, sync deassert
     input  wire                          wr_en,    // coefficient write strobe
     input  wire [WSEL_W-1:0]             wr_sel,   // 0=W1 1=b1 2=W2 3=b2
+    input  wire [BANK_W-1:0]             wr_bank,  // weight bank to write (tied 0 when N_BANK=1)
     input  wire [WADDR_W-1:0]            wr_addr,  // linear index in selected array
     input  wire [DATA_WIDTH-1:0]         wr_data,  // signed int8 coefficient
+    input  wire [BANK_W-1:0]             bank_sel, // weight bank to read (hold stable per invocation)
     input  wire                          in_valid, // x_vec valid this cycle
     input  wire [D_TOKEN*DATA_WIDTH-1:0] x_vec,    // packed: x[k] = x_vec[k*W +: W]
     output wire                          out_valid,// y_vec valid
     output wire [D_TOKEN*DATA_WIDTH-1:0] y_vec     // packed: y[o] = y_vec[o*W +: W]
 );
+
+    // Unbanked (N_BANK=1) forces index 0 so wr_bank/bank_sel may stay unconnected.
+    wire [BANK_W-1:0] rd_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : bank_sel;
+    wire [BANK_W-1:0] wb_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : wr_bank;
 
     // ---- derived sizes (sized to hold EXACT values, no truncation) --------
     localparam CLOG2_DT = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN);
@@ -111,18 +119,18 @@ module feed_forward_network #(
     endfunction
 
     // ---- coefficient register file (FF-based, write-only port) ------------
-    reg signed [DATA_WIDTH-1:0] w1_mem [0:W1_DEPTH-1];   // Linear1.weight (F,E)
-    reg signed [DATA_WIDTH-1:0] b1_mem [0:D_FFN-1];      // Linear1.bias   (F)
-    reg signed [DATA_WIDTH-1:0] w2_mem [0:W2_DEPTH-1];   // Linear2.weight (E,F)
-    reg signed [DATA_WIDTH-1:0] b2_mem [0:D_TOKEN-1];    // Linear2.bias   (E)
+    reg signed [DATA_WIDTH-1:0] w1_mem [0:N_BANK-1][0:W1_DEPTH-1];   // Linear1.weight (F,E)
+    reg signed [DATA_WIDTH-1:0] b1_mem [0:N_BANK-1][0:D_FFN-1];      // Linear1.bias   (F)
+    reg signed [DATA_WIDTH-1:0] w2_mem [0:N_BANK-1][0:W2_DEPTH-1];   // Linear2.weight (E,F)
+    reg signed [DATA_WIDTH-1:0] b2_mem [0:N_BANK-1][0:D_TOKEN-1];    // Linear2.bias   (E)
 
     always_ff @(posedge clk) begin
         if (wr_en) begin
             case (wr_sel)
-                2'd0: w1_mem[wr_addr] <= wr_data;
-                2'd1: b1_mem[wr_addr] <= wr_data;
-                2'd2: w2_mem[wr_addr] <= wr_data;
-                2'd3: b2_mem[wr_addr] <= wr_data;
+                2'd0: w1_mem[wb_bank][wr_addr] <= wr_data;
+                2'd1: b1_mem[wb_bank][wr_addr] <= wr_data;
+                2'd2: w2_mem[wb_bank][wr_addr] <= wr_data;
+                2'd3: b2_mem[wb_bank][wr_addr] <= wr_data;
                 default: ;
             endcase
         end
@@ -163,8 +171,8 @@ module feed_forward_network #(
             always_comb begin
                 a1 = {RQ_W{1'b0}};
                 for (kk = 0; kk < D_TOKEN; kk = kk + 1)
-                    a1 = a1 + xq[kk] * w1_mem[go*D_TOKEN + kk];
-                a1 = a1 + align_bias(b1_mem[go]);
+                    a1 = a1 + xq[kk] * w1_mem[rd_bank][go*D_TOKEN + kk];
+                a1 = a1 + align_bias(b1_mem[rd_bank][go]);
             end
             always_ff @(posedge clk)
                 hq[go] <= requant(a1, FRAC_BITS);
@@ -187,8 +195,8 @@ module feed_forward_network #(
             always_comb begin
                 a2 = {RQ_W{1'b0}};
                 for (kk = 0; kk < D_FFN; kk = kk + 1)
-                    a2 = a2 + gq[kk] * w2_mem[go*D_FFN + kk];
-                a2 = a2 + align_bias(b2_mem[go]);
+                    a2 = a2 + gq[kk] * w2_mem[rd_bank][go*D_FFN + kk];
+                a2 = a2 + align_bias(b2_mem[rd_bank][go]);
             end
             always_ff @(posedge clk)
                 yq[go] <= requant(a2, FRAC_BITS);

@@ -61,23 +61,31 @@ module multihead_attention #(
     // Override (with SEQ_LEN/N_HEADS) when N_HEADS changes; the TB / DC script
     // recompute it. Pass the SAME value to multihead_attention_int8().
     parameter SCALE      = 8192,
+    parameter N_BANK     = 1,    // resident weight banks (1 => unbanked; ports below ignored)
     // ---- derived (do not override) ----
     parameter HD         = D_TOKEN / N_HEADS,
     parameter IPW_DEPTH  = 3 * D_TOKEN * D_TOKEN,
     parameter WSEL_W     = 2,
-    parameter WADDR_W    = ($clog2(IPW_DEPTH) < 1) ? 1 : $clog2(IPW_DEPTH)
+    parameter WADDR_W    = ($clog2(IPW_DEPTH) < 1) ? 1 : $clog2(IPW_DEPTH),
+    parameter BANK_W     = ($clog2(N_BANK) < 1) ? 1 : $clog2(N_BANK)
 ) (
     input  wire                                  clk,
     input  wire                                  rst_n,      // async assert, sync deassert
     input  wire                                  wr_en,      // coefficient write strobe
     input  wire [WSEL_W-1:0]                     wr_sel,     // 0=ipw 1=ipb 2=opw 3=opb
+    input  wire [BANK_W-1:0]                     wr_bank,    // weight bank to write (tied 0 when N_BANK=1)
     input  wire [WADDR_W-1:0]                    wr_addr,    // linear index in selected array
     input  wire [DATA_WIDTH-1:0]                 wr_data,    // signed int8 coefficient
+    input  wire [BANK_W-1:0]                     bank_sel,   // weight bank to read (hold stable per invocation)
     input  wire                                  in_valid,   // x_seq valid this cycle
     input  wire [SEQ_LEN*D_TOKEN*DATA_WIDTH-1:0] x_seq,      // x[s][e]=x_seq[(s*E+e)*W +: W]
     output wire                                  out_valid,  // y_seq valid
     output wire [SEQ_LEN*D_TOKEN*DATA_WIDTH-1:0] y_seq       // y[s][e]=y_seq[(s*E+e)*W +: W]
 );
+
+    // Unbanked (N_BANK=1) forces index 0 so wr_bank/bank_sel may stay unconnected.
+    wire [BANK_W-1:0] rd_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : bank_sel;
+    wire [BANK_W-1:0] wb_bank = (N_BANK == 1) ? {BANK_W{1'b0}} : wr_bank;
 
     // ---- derived sizes (sized to hold EXACT values, no truncation) --------
     localparam CLOG2_E  = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN);
@@ -196,18 +204,18 @@ module multihead_attention #(
     endfunction
 
     // ---- coefficient register file (FF-based, write-only port) ------------
-    reg signed [DATA_WIDTH-1:0] ipw_mem [0:3*D_TOKEN*D_TOKEN-1];  // in_proj_weight (3E,E)
-    reg signed [DATA_WIDTH-1:0] ipb_mem [0:3*D_TOKEN-1];          // in_proj_bias   (3E)
-    reg signed [DATA_WIDTH-1:0] opw_mem [0:D_TOKEN*D_TOKEN-1];    // out_proj.weight(E,E)
-    reg signed [DATA_WIDTH-1:0] opb_mem [0:D_TOKEN-1];            // out_proj.bias  (E)
+    reg signed [DATA_WIDTH-1:0] ipw_mem [0:N_BANK-1][0:3*D_TOKEN*D_TOKEN-1];  // in_proj_weight (3E,E)
+    reg signed [DATA_WIDTH-1:0] ipb_mem [0:N_BANK-1][0:3*D_TOKEN-1];          // in_proj_bias   (3E)
+    reg signed [DATA_WIDTH-1:0] opw_mem [0:N_BANK-1][0:D_TOKEN*D_TOKEN-1];    // out_proj.weight(E,E)
+    reg signed [DATA_WIDTH-1:0] opb_mem [0:N_BANK-1][0:D_TOKEN-1];            // out_proj.bias  (E)
 
     always_ff @(posedge clk) begin
         if (wr_en) begin
             case (wr_sel)
-                2'd0: ipw_mem[wr_addr] <= wr_data;
-                2'd1: ipb_mem[wr_addr] <= wr_data;
-                2'd2: opw_mem[wr_addr] <= wr_data;
-                2'd3: opb_mem[wr_addr] <= wr_data;
+                2'd0: ipw_mem[wb_bank][wr_addr] <= wr_data;
+                2'd1: ipb_mem[wb_bank][wr_addr] <= wr_data;
+                2'd2: opw_mem[wb_bank][wr_addr] <= wr_data;
+                2'd3: opb_mem[wb_bank][wr_addr] <= wr_data;
                 default: ;
             endcase
         end
@@ -260,13 +268,13 @@ module multihead_attention #(
                     ak = {PROJ_ACC_W{1'b0}};
                     av = {PROJ_ACC_W{1'b0}};
                     for (kk = 0; kk < D_TOKEN; kk = kk + 1) begin
-                        aq = aq + xq[gs][kk] * ipw_mem[ge*D_TOKEN + kk];
-                        ak = ak + xq[gs][kk] * ipw_mem[(D_TOKEN+ge)*D_TOKEN + kk];
-                        av = av + xq[gs][kk] * ipw_mem[(2*D_TOKEN+ge)*D_TOKEN + kk];
+                        aq = aq + xq[gs][kk] * ipw_mem[rd_bank][ge*D_TOKEN + kk];
+                        ak = ak + xq[gs][kk] * ipw_mem[rd_bank][(D_TOKEN+ge)*D_TOKEN + kk];
+                        av = av + xq[gs][kk] * ipw_mem[rd_bank][(2*D_TOKEN+ge)*D_TOKEN + kk];
                     end
-                    aq = aq + align_bias(ipb_mem[ge]);
-                    ak = ak + align_bias(ipb_mem[D_TOKEN+ge]);
-                    av = av + align_bias(ipb_mem[2*D_TOKEN+ge]);
+                    aq = aq + align_bias(ipb_mem[rd_bank][ge]);
+                    ak = ak + align_bias(ipb_mem[rd_bank][D_TOKEN+ge]);
+                    av = av + align_bias(ipb_mem[rd_bank][2*D_TOKEN+ge]);
                 end
                 always_ff @(posedge clk) begin
                     Qr [gs][ge] <= requant(aq, FRAC_BITS);
@@ -365,8 +373,8 @@ module multihead_attention #(
                 always_comb begin
                     ao = {PROJ_ACC_W{1'b0}};
                     for (kk = 0; kk < D_TOKEN; kk = kk + 1)
-                        ao = ao + ctxr[gs][kk] * opw_mem[ge*D_TOKEN + kk];
-                    ao = ao + align_bias(opb_mem[ge]);
+                        ao = ao + ctxr[gs][kk] * opw_mem[rd_bank][ge*D_TOKEN + kk];
+                    ao = ao + align_bias(opb_mem[rd_bank][ge]);
                 end
                 always_ff @(posedge clk)
                     yq[gs][ge] <= requant(ao, FRAC_BITS);

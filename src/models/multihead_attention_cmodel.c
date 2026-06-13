@@ -23,9 +23,7 @@
 
 #include <stdint.h>
 
-#ifdef MA_STANDALONE
-#include <math.h>   /* mha_scale + the standalone float reference only */
-#endif
+#include <math.h>   /* mha_scale (always) + the standalone float reference */
 
 /* The round-half-up requant and the (negative) C1 polynomial term rely on an
  * arithmetic (sign-replicating) right shift of negative signed values -- what
@@ -178,22 +176,24 @@ void multihead_attention_int8(
     }
 }
 
-#ifdef MA_STANDALONE
-/* ---------------------------------------------------------------------
- * mha_scale + standalone self-test (compiled only with -DMA_STANDALONE).
- * Compares the integer model to a float reference that shares the SAME int8
- * dataflow (identical Q/K/V/ctx quantization points) but uses true float
- * exp()/softmax, isolating the integer-softmax approximation error.
- * ------------------------------------------------------------------- */
-#include <stdio.h>
-#include <stdlib.h>
-
+/* Integer 1/sqrt(head_dim) scale (see header). Defined unconditionally so a
+ * full-model composition that links this twin can derive SCALE consistently. */
 long long mha_scale(int n_heads, int d_token, int scale_frac)
 {
     int    hd = d_token / n_heads;
     double v  = (double)((long long)1 << scale_frac) / sqrt((double)hd);
     return (long long)(v + 0.5);
 }
+
+#ifdef MA_STANDALONE
+/* ---------------------------------------------------------------------
+ * standalone self-test (compiled only with -DMA_STANDALONE).
+ * Compares the integer model to a float reference that shares the SAME int8
+ * dataflow (identical Q/K/V/ctx quantization points) but uses true float
+ * exp()/softmax, isolating the integer-softmax approximation error.
+ * ------------------------------------------------------------------- */
+#include <stdio.h>
+#include <stdlib.h>
 
 /* tiny deterministic LCG so the self-test is reproducible */
 static uint32_t lcg_state = 0x2468ace0u;

@@ -48,6 +48,19 @@ FLIST_FFN   := feed_forward_network_filelist.f
 SIMV_FFN    := simv_ffn
 FSDB_FFN    := feed_forward_network.fsdb
 
+# ---- Full FT-Transformer top (composes all four cores + glue) --------------
+TB_FT       := tb_ft_transformer.sv
+DPI_FT      := ft_transformer_dpi.c
+FLIST_FT    := ft_transformer_filelist.f
+SIMV_FT     := simv_ft
+FSDB_FT     := ft_transformer.fsdb
+# the full-model golden + every block twin it calls (tokenizer C twin included)
+CMODEL_FT   := $(MODELDIR)/ft_transformer_cmodel.c \
+               $(MODELDIR)/numerical_feature_tokenizer_cmodel.c \
+               $(MODELDIR)/layer_norm_cmodel.c \
+               $(MODELDIR)/multihead_attention_cmodel.c \
+               $(MODELDIR)/feed_forward_network_cmodel.c
+
 # -kdb pairs with -debug_access+all: writes the Verdi Knowledge DB
 # (simv.daidir/kdb) so the FSDB loads with full source / code hierarchy.
 VCS_FLAGS := -full64 -sverilog -debug_access+all -kdb -timescale=1ns/1ps
@@ -62,7 +75,8 @@ NOVAS_FLAGS ?=
 
 .PHONY: all comp run verdi cmodel \
         all_mha comp_mha run_mha verdi_mha cmodel_mha \
-        all_ffn comp_ffn run_ffn verdi_ffn cmodel_ffn clean
+        all_ffn comp_ffn run_ffn verdi_ffn cmodel_ffn \
+        all_ft comp_ft run_ft verdi_ft cmodel_ft clean
 
 all: comp run
 
@@ -135,8 +149,32 @@ verdi_ffn:
 cmodel_ffn:
 	$(GCC) -DFFN_STANDALONE -O2 -std=c11 $(CMODEL_FFN) -o ffncm -lm && ./ffncm
 
+# ---- Full FT-Transformer targets -------------------------------------------
+#   make all_ft                               # compile + run the DPI check
+#   make verdi_ft                             # open ft_transformer.fsdb
+#   make run_ft SIMARGS=+seed=12345           # pick a random seed
+all_ft: comp_ft run_ft
+
+comp_ft:
+	$(VCS) $(VCS_FLAGS) $(VCS_DEFINES) \
+	    -CFLAGS "$(CFLAGS)" \
+	    -f $(FLIST_FT) \
+	    $(DPI_FT) $(CMODEL_FT) \
+	    $(NOVAS_FLAGS) \
+	    -l comp_ft.log -o $(SIMV_FT)
+
+run_ft:
+	./$(SIMV_FT) +fsdb+autoflush $(SIMARGS) -l run_ft.log
+
+verdi_ft:
+	$(VERDI) -dbdir $(SIMV_FT).daidir/kdb -ssf $(FSDB_FT) &
+
+# Simulator-free: full int8 composition gate + accuracy sanity (needs gcc).
+cmodel_ft:
+	$(GCC) -DFT_STANDALONE -O2 -std=c11 $(CMODEL_FT) -o ftcm -lm && ./ftcm
+
 clean:
-	rm -rf $(SIMV) $(SIMV_MHA) $(SIMV_FFN) \
-	       $(SIMV).daidir $(SIMV_MHA).daidir $(SIMV_FFN).daidir \
+	rm -rf $(SIMV) $(SIMV_MHA) $(SIMV_FFN) $(SIMV_FT) \
+	       $(SIMV).daidir $(SIMV_MHA).daidir $(SIMV_FFN).daidir $(SIMV_FT).daidir \
 	       csrc ucli.key vc_hdrs.h \
-	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm ffncm DVEfiles .inter.vpd.uvm
+	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm ffncm ftcm DVEfiles .inter.vpd.uvm
