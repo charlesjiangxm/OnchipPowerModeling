@@ -1,22 +1,12 @@
 ################################################################################
-# Design Compiler synthesis for layer_norm_registered (FT-Transformer LayerNorm).
-#
-# Mirrors dc.tcl (the tokenizer flow) but targets the LayerNorm block. The RTL
-# uses SystemVerilog always_ff/always_comb, so it is analyzed as -format
-# sverilog. EPS_V defaults to round(1e-5 * 2^(2*FRAC_BITS) * D_TOKEN^2) so it
-# tracks D_TOKEN automatically; override via the EPS_V env var if needed.
-#
-# Run:  ./run_dc_layer_norm.csh -mode syn [-batch_dir <dir>] [param overrides]
-################################################################################
-
-################################################################################
 # User configuration
 ################################################################################
-set SYN_ROOT        [file normalize [file dirname [info script]]]
+set SCRIPT_ROOT     [file normalize [file dirname [info script]]]
+set SYN_ROOT        [file normalize [file join ${SCRIPT_ROOT} ..]]
 set HW_ROOT         [file normalize [file join ${SYN_ROOT} ..]]
 set PROJ_ROOT       [file normalize [file join ${HW_ROOT} ..]]
 set RTL_ROOT        ${HW_ROOT}/rtl
-set TOP_MODULE_NAME layer_norm_registered
+set TOP_MODULE_NAME numerical_feature_tokenizer_registered
 
 proc get_env_or_default {name default_value} {
   if {[info exists ::env($name)] && $::env($name) ne ""} {
@@ -25,14 +15,10 @@ proc get_env_or_default {name default_value} {
   return $default_value
 }
 
+set N_FEATURE    [get_env_or_default N_FEATURE    20]
 set D_TOKEN      [get_env_or_default D_TOKEN      32]
 set DATA_WIDTH   [get_env_or_default DATA_WIDTH   8]
 set FRAC_BITS    [get_env_or_default FRAC_BITS    7]
-set RECIP_FRAC   [get_env_or_default RECIP_FRAC   24]
-set OUT_FRAC     [get_env_or_default OUT_FRAC     7]
-# EPS_V default = round(eps * 2^(2*FRAC_BITS) * D_TOKEN^2), eps = 1e-5.
-set EPS_V_DEFAULT [expr {int(1e-5 * (1 << (2 * $FRAC_BITS)) * $D_TOKEN * $D_TOKEN + 0.5)}]
-set EPS_V        [get_env_or_default EPS_V        ${EPS_V_DEFAULT}]
 set CLOCK_PERIOD [get_env_or_default CLOCK_PERIOD 1.0]
 
 set INPUT_DELAY       [get_env_or_default INPUT_DELAY       [expr {$CLOCK_PERIOD * 0.20}]]
@@ -49,7 +35,7 @@ if {[info exists ::env(BATCH_DIR)] && $::env(BATCH_DIR) ne ""} {
   }
 } else {
   set date_hour [clock format [clock seconds] -format "%Y%m%d_%H"]
-  set BATCH_DIR [file join ${SYN_ROOT} "batch_layer_norm_${date_hour}"]
+  set BATCH_DIR [file join ${SYN_ROOT} "batch_${date_hour}"]
 }
 
 file mkdir ${BATCH_DIR}
@@ -59,12 +45,10 @@ file mkdir ${BATCH_DIR}/results
 
 set param_rpt [open ${BATCH_DIR}/reports/${TOP_MODULE_NAME}.parameters.rpt w]
 puts $param_rpt "TOP_MODULE_NAME  ${TOP_MODULE_NAME}"
+puts $param_rpt "N_FEATURE        ${N_FEATURE}"
 puts $param_rpt "D_TOKEN          ${D_TOKEN}"
 puts $param_rpt "DATA_WIDTH       ${DATA_WIDTH}"
 puts $param_rpt "FRAC_BITS        ${FRAC_BITS}"
-puts $param_rpt "RECIP_FRAC       ${RECIP_FRAC}"
-puts $param_rpt "OUT_FRAC         ${OUT_FRAC}"
-puts $param_rpt "EPS_V            ${EPS_V}"
 puts $param_rpt "CLOCK_PERIOD     ${CLOCK_PERIOD}"
 puts $param_rpt "INPUT_DELAY      ${INPUT_DELAY}"
 puts $param_rpt "OUTPUT_DELAY     ${OUTPUT_DELAY}"
@@ -116,14 +100,13 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
-  ${RTL_ROOT}/layer_norm.v \
-  ${RTL_ROOT}/layer_norm_registered.v \
+  ${RTL_ROOT}/numerical_feature_tokenizer.v \
+  ${RTL_ROOT}/numerical_feature_tokenizer_registered.v \
 ]
 
-# RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.
-analyze -format sverilog $rtl_files
+analyze -format verilog $rtl_files
 
-set ELAB_PARAMS "D_TOKEN=${D_TOKEN},DATA_WIDTH=${DATA_WIDTH},FRAC_BITS=${FRAC_BITS},RECIP_FRAC=${RECIP_FRAC},OUT_FRAC=${OUT_FRAC},EPS_V=${EPS_V}"
+set ELAB_PARAMS "N_FEATURE=${N_FEATURE},D_TOKEN=${D_TOKEN},DATA_WIDTH=${DATA_WIDTH},FRAC_BITS=${FRAC_BITS}"
 elaborate ${TOP_MODULE_NAME} -parameters ${ELAB_PARAMS}
 current_design ${TOP_MODULE_NAME}
 link

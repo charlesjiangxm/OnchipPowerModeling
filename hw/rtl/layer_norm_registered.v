@@ -6,8 +6,8 @@
 // boundary around the combinational port logic.
 //
 // (*) Instantiates the SystemVerilog layer_norm (always_ff/always_comb), so
-// analyze both files as -format sverilog (see hw/syn/dc_layer_norm.tcl). No
-// `logic` is used here -- only reg/wire.
+// analyze both files as -format sverilog (see hw/syn/script/dc_layer_norm.tcl).
+// No `logic` is used here -- only reg/wire.
 // =====================================================================
 
 `default_nettype none

@@ -1,8 +1,9 @@
-#!/bin/tcsh
+#!/bin/tcsh -f
 
 # Run Synopsys Design Compiler synthesis for numerical_feature_tokenizer.
 # Usage:
 #   ./run_dc.csh -mode syn [-batch_dir <directory>] [parameter overrides]
+#   ./run_dc.csh --clean
 #
 # Optional overrides:
 #   -clock_period <ns>
@@ -18,17 +19,26 @@
 if ( $#argv == 0 ) then
     echo "Error: No argument provided."
     echo "Usage: $0 -mode syn [-batch_dir <directory>] [parameter overrides]"
+    echo "       $0 --clean"
     exit 1
 endif
 
 set mode = ""
 set batch_dir = ""
+set clean = 0
 
 set script_dir = `dirname "$0"`
 cd "$script_dir"
+set script_dir = `pwd`
+set syn_dir = `dirname "$script_dir"`
+cd "$syn_dir"
 
 while ( $#argv > 0 )
     switch ( "$1" )
+        case "--clean":
+            set clean = 1
+            shift
+            breaksw
         case "-mode":
             if ( $#argv < 2 ) then
                 echo "Error: -mode requires an argument"
@@ -120,19 +130,35 @@ while ( $#argv > 0 )
         default:
             echo "Error: Unknown option '$1'"
             echo "Usage: $0 -mode syn [-batch_dir <directory>] [parameter overrides]"
+            echo "       $0 --clean"
             exit 1
     endsw
 end
 
+if ( "$clean" == "1" ) then
+    echo "Cleaning generated synthesis files under ${syn_dir}"
+    set nonomatch
+    foreach path ( batch_* batch_layer_norm_* alib-* dc.log dc_layer_norm.log command.log view_command.log default.svf )
+        if ( -e "$path" ) then
+            echo "Removing ${path}"
+            /usr/bin/rm -rf "$path"
+        endif
+    end
+    unset nonomatch
+    exit 0
+endif
+
 if ( "$mode" == "" ) then
     echo "Error: -mode is required"
     echo "Usage: $0 -mode syn [-batch_dir <directory>] [parameter overrides]"
+    echo "       $0 --clean"
     exit 1
 endif
 
 if ( "$mode" != "syn" ) then
     echo "Error: Invalid mode '$mode'. Must be 'syn'"
     echo "Usage: $0 -mode syn [-batch_dir <directory>] [parameter overrides]"
+    echo "       $0 --clean"
     exit 1
 endif
 
@@ -140,8 +166,8 @@ if ( "$batch_dir" != "" ) then
     setenv BATCH_DIR "$batch_dir"
 endif
 
-set tcl_script = "dc.tcl"
+set tcl_script = "${script_dir}/dc.tcl"
 set log_file   = "dc.log"
 
-echo "Running DC synthesis with ${tcl_script}, log saved to ${log_file}"
+echo "Running DC synthesis with ${tcl_script}, log saved to ${syn_dir}/${log_file}"
 dc_shell -f ${tcl_script} |& tee -i ${log_file}

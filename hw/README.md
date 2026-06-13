@@ -160,7 +160,7 @@ fixed latency — **II = 1**, latency **5**.
 | `verif/layer_norm_dpi.c` | Thin DPI-C glue exposing `layer_norm_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
 | `verif/tb_layer_norm.sv` | End-to-end self-checking SV testbench: random tokens + random γ/β, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
 | `verif/Makefile`, `verif/filelist.f` | VCS-only compile/run/verdi flow. |
-| `syn/dc_layer_norm.tcl`, `syn/run_dc_layer_norm.csh` | Design Compiler scaffold (mirrors the tokenizer's). |
+| `syn/script/dc_layer_norm.tcl`, `syn/script/run_dc_layer_norm.csh` | Design Compiler scaffold (mirrors the tokenizer's). |
 
 ## Numeric model (int8, inference only)
 
@@ -249,5 +249,6 @@ Makefile to link the Verdi PLI (`novas.tab`/`pli.a` `+vpi +memcbk +vcsd`).
 **Synthesis (Design Compiler):**
 
 ```
-cd hw/syn && ./run_dc_layer_norm.csh -mode syn -d_token 32
+cd hw/syn/script && ./run_dc_layer_norm.csh -mode syn -d_token 32
+# Outputs are written under hw/syn.
 ```

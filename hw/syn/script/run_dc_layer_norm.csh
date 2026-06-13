@@ -1,4 +1,4 @@
-#!/bin/tcsh
+#!/bin/tcsh -f
 
 # Run Synopsys Design Compiler synthesis for layer_norm_registered.
 # Usage:
@@ -28,6 +28,9 @@ set batch_dir = ""
 
 set script_dir = `dirname "$0"`
 cd "$script_dir"
+set script_dir = `pwd`
+set syn_dir = `dirname "$script_dir"`
+cd "$syn_dir"
 
 while ( $#argv > 0 )
     switch ( "$1" )
@@ -158,8 +161,8 @@ if ( "$batch_dir" != "" ) then
     setenv BATCH_DIR "$batch_dir"
 endif
 
-set tcl_script = "dc_layer_norm.tcl"
+set tcl_script = "${script_dir}/dc_layer_norm.tcl"
 set log_file   = "dc_layer_norm.log"
 
-echo "Running DC synthesis with ${tcl_script}, log saved to ${log_file}"
+echo "Running DC synthesis with ${tcl_script}, log saved to ${syn_dir}/${log_file}"
 dc_shell -f ${tcl_script} |& tee -i ${log_file}
