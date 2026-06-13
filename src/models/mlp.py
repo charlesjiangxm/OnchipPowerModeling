@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import BaseModel, register
-from ..ft_transformer_model import default_device
+from ..torch_utils import default_device
 
 
 class SmallMLP(nn.Module):

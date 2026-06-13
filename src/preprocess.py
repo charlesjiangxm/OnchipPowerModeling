@@ -1,7 +1,7 @@
 """Drop zero-variance columns (identified on train) and z-score X and y on
 the training split. The same train-fit Standardizer is applied to val and
-test, never refit on them. Reuses ``Standardizer`` from
-``ft_transformer_model.py`` so the FT-Transformer path stays compatible.
+test, never refit on them. Reuses ``Standardizer`` from ``torch_utils.py``
+so the FT-Transformer path stays compatible.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.feature_selection import VarianceThreshold
 
-from .ft_transformer_model import Standardizer
+from .torch_utils import Standardizer
 
 
 log = logging.getLogger(__name__)
