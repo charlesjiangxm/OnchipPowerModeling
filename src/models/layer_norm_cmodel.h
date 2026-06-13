@@ -10,7 +10,7 @@
  * output is bit-for-bit identical to layer_norm_int8() for every element.
  *
  * The DPI-C glue that exposes this to a SystemVerilog testbench lives
- * separately in hw/verif/layer_norm_dpi.c -- nothing simulator-specific
+ * separately in hw/verif/utils/layer_norm_dpi.c -- nothing simulator-specific
  * leaks into this file.
  * =====================================================================
  */

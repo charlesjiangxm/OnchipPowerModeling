@@ -17,7 +17,7 @@
  * bit-for-bit identical to feed_forward_network_int8() for every element.
  *
  * The DPI-C glue that exposes this to a SystemVerilog testbench lives
- * separately in hw/verif/feed_forward_network_dpi.c -- nothing simulator-
+ * separately in hw/verif/utils/feed_forward_network_dpi.c -- nothing simulator-
  * specific leaks into this file.
  * =====================================================================
  */

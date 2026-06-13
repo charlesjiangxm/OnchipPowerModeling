@@ -13,7 +13,7 @@
  * for every element.
  *
  * The DPI-C glue that exposes this to a SystemVerilog testbench lives
- * separately in hw/verif/multihead_attention_dpi.c -- nothing simulator-
+ * separately in hw/verif/utils/multihead_attention_dpi.c -- nothing simulator-
  * specific leaks into this file.
  * =====================================================================
  */

@@ -1,5 +1,5 @@
 // =====================================================================
-// tb_numerical_feature_tokenizer.v
+// tb_numerical_feature_tokenizer.sv
 //
 // Self-checking testbench for numerical_feature_tokenizer.
 //   1. Loads known int8 weight/bias into every (j,k) via the write port.
@@ -8,8 +8,8 @@
 //   3. Compares each int8 output against a wide-integer golden model that
 //      mirrors the DUT's align/round/saturate semantics.
 //
-// Run:  iverilog -g2005 -o tb.out \
-//           numerical_feature_tokenizer.v tb_numerical_feature_tokenizer.v && vvp tb.out
+// Build/run: see hw/verif/Makefile.
+//   make TB=numerical_feature_tokenizer all
 // =====================================================================
 
 `timescale 1ns/1ps
@@ -105,6 +105,9 @@ module tb_numerical_feature_tokenizer;
         rst_n = 0; wr_en = 0; wr_is_bias = 0; wr_addr = 0; wr_data = 0;
         in_valid = 0; x_row = 0; errors = 0; out_count = 0;
         first_out_cyc = 0; last_out_cyc = 0; checking = 0;
+
+        $fsdbDumpfile("numerical_feature_tokenizer.fsdb");
+        $fsdbDumpvars(0, tb_numerical_feature_tokenizer, "+mda");
 
         // Choose signed coefficient patterns (wrapped into int8).
         for (i = 0; i < DEPTH; i = i + 1) begin

@@ -20,7 +20,7 @@ bias add. The block consumes **one input row `x` per clock** and emits the full
 | File | Purpose |
 |------|---------|
 | `numerical_feature_tokenizer.v` | Synthesizable DUT (FF register file + `N_FEATURE×D_TOKEN` pipelined int8 multiply-add lanes). |
-| `tb_numerical_feature_tokenizer.v` | Self-checking Verilog testbench (loads coefficients, streams rows back-to-back, checks values + II=1). |
+| `verif/tb/tb_numerical_feature_tokenizer.sv` | Self-checking SystemVerilog testbench (loads coefficients, streams rows back-to-back, checks values + II=1). |
 | `ref_model.py` | Cycle-accurate Python twin of the integer datapath/pipeline; validates the arithmetic and II=1 **without an HDL simulator**, and is reusable for coefficient quantization. |
 
 ## Numeric model (int8, inference only)
@@ -105,17 +105,12 @@ It reproduces the RTL's exact integer semantics (align/round/saturate) and
 `-128` row, then random int8), and additionally confirms the dequantized output
 matches the float `x·W + b` op to within the 0.5-LSB rounding bound.
 
-**HDL simulation** (Icarus Verilog or Verilator — *not installed in this
-environment*, so the RTL was not simulated here; install one, e.g.
-`brew install icarus-verilog`, then run):
+**HDL simulation** (VCS + Verdi):
 
 ```
-cd hw
-iverilog -g2005 -o tb.out numerical_feature_tokenizer.v tb_numerical_feature_tokenizer.v && vvp tb.out
+cd hw/verif
+make TB=numerical_feature_tokenizer all
 # expect: PASS: 12 rows x 16 tokens match; II=1 (contiguous outputs).
-
-# quick syntax/lint check with Verilator:
-verilator --lint-only -Wall numerical_feature_tokenizer.v
 ```
 
 ## Resource note
@@ -157,9 +152,9 @@ fixed latency — **II = 1**, latency **5**.
 | `rtl/layer_norm.v` | Synthesizable DUT (S/SS reduction → V → integer `sqrt` → reciprocal → per-lane affine + requant). Verilog-2005 dialect but uses `always_ff`/`always_comb` (no `logic`); compile with `vcs -sverilog`. |
 | `rtl/layer_norm_registered.v` | Synthesis wrapper adding input/output registers (flop-to-flop boundary for DC). |
 | `../src/models/layer_norm_cmodel.{c,h}` | **Pure** behavioral C reference (no hardware/sim detail). The golden model — the RTL output equals it bit-for-bit. Has a `-DLN_STANDALONE` self-test vs the float ideal. |
-| `verif/layer_norm_dpi.c` | Thin DPI-C glue exposing `layer_norm_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
-| `verif/tb_layer_norm.sv` | End-to-end self-checking SV testbench: random tokens + random γ/β, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
-| `verif/Makefile`, `verif/filelist.f` | VCS-only compile/run/verdi flow. |
+| `verif/utils/layer_norm_dpi.c` | Thin DPI-C glue exposing `layer_norm_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
+| `verif/tb/tb_layer_norm.sv` | End-to-end self-checking SV testbench: random tokens + random γ/β, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
+| `verif/Makefile`, `verif/flist/layer_norm_filelist.f` | VCS-only compile/run/verdi flow. |
 | `syn/script/dc_layer_norm.tcl`, `syn/script/run_dc_layer_norm.csh` | Design Compiler scaffold (mirrors the tokenizer's). |
 
 ## Numeric model (int8, inference only)
@@ -285,9 +280,9 @@ model. One full `(S, E)` example is consumed per clock (packed `x_seq`, with
 | `rtl/multihead_attention.v` | Synthesizable DUT (FF weight regfile → in_proj → per-head scores+scale → integer softmax → context → out_proj, fully-parallel II=1 pipeline). Verilog-2005 dialect using `always_ff`/`always_comb` (no `logic`); compile with `vcs -sverilog`. |
 | `rtl/multihead_attention_registered.v` | Synthesis wrapper adding input/output registers (flop-to-flop boundary for DC). |
 | `../src/models/multihead_attention_cmodel.{c,h}` | **Pure** behavioral C reference (no hardware/sim detail). The golden model — the RTL output equals it bit-for-bit. Has a `-DMA_STANDALONE` self-test vs a float reference. |
-| `verif/multihead_attention_dpi.c` | Thin DPI-C glue exposing `multihead_attention_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
-| `verif/tb_multihead_attention.sv` | End-to-end self-checking SV testbench: random sequences + random weights, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
-| `verif/Makefile` (`*_mha` targets), `verif/multihead_attention_filelist.f` | VCS-only compile/run/verdi flow. |
+| `verif/utils/multihead_attention_dpi.c` | Thin DPI-C glue exposing `multihead_attention_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
+| `verif/tb/tb_multihead_attention.sv` | End-to-end self-checking SV testbench: random sequences + random weights, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
+| `verif/Makefile` (`*_mha` targets), `verif/flist/multihead_attention_filelist.f` | VCS-only compile/run/verdi flow. |
 | `syn/script/dc_multihead_attention.tcl`, `syn/script/run_dc_multihead_attention.csh` | Design Compiler scaffold (mirrors the LayerNorm flow). |
 
 ## Numeric model (int8, inference only)
