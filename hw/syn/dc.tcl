@@ -103,7 +103,8 @@ set rtl_files [list \
   ${RTL_ROOT}/numerical_feature_tokenizer_registered.v \
 ]
 
-analyze -format verilog $rtl_files
+# RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.
+analyze -format sverilog $rtl_files
 
 set ELAB_PARAMS "N_FEATURE=${N_FEATURE},D_TOKEN=${D_TOKEN},DATA_WIDTH=${DATA_WIDTH},FRAC_BITS=${FRAC_BITS}"
 elaborate ${TOP_MODULE_NAME} -parameters ${ELAB_PARAMS}

@@ -1,5 +1,5 @@
 // =====================================================================
-// numerical_feature_tokenizer.v                              (Verilog-2005)
+// numerical_feature_tokenizer.v                             (Verilog-2005*)
 //
 // Hardware implementation of the FT-Transformer NumericalFeatureTokenizer
 // (src/models/ft_transformer.py). For an input row x of N_FEATURE elements
@@ -24,8 +24,13 @@
 // Weights/biases live in an FF-based register file (so every coefficient can
 // be read in parallel each cycle) and are loaded through a write-only port.
 //
-// Verilog-2005: ANSI ports + $clog2 size the write-address port; the "*"
-// operator lets the synthesis tool infer hard multipliers / DSP blocks.
+// ANSI ports + $clog2 size the write-address port; the "*" operator lets
+// the synthesis tool infer hard multipliers / DSP blocks.
+//
+// (*) Verilog-2005 dialect, but uses the SystemVerilog procedural keywords
+// always_ff / always_comb (compile with `vcs -sverilog`, analyze with
+// `analyze -format sverilog`). No `logic` is used -- every signal is
+// `reg`/`wire` -- and the design uses clk / rst_n.
 // =====================================================================
 
 `default_nettype none
@@ -92,7 +97,7 @@ module numerical_feature_tokenizer #(
     reg signed [DATA_WIDTH-1:0] weight_mem [0:DEPTH-1];
     reg signed [DATA_WIDTH-1:0] bias_mem   [0:DEPTH-1];
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (wr_en) begin
             if (wr_is_bias) bias_mem[wr_addr]   <= wr_data;
             else            weight_mem[wr_addr] <= wr_data;
@@ -107,7 +112,7 @@ module numerical_feature_tokenizer #(
 
     // Valid pipeline is resettable; the datapath self-flushes via valid
     // gating (no need to reset the wide data registers).
-    always @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             v1 <= 1'b0; v2 <= 1'b0; v3 <= 1'b0;
         end else begin
@@ -121,20 +126,27 @@ module numerical_feature_tokenizer #(
     generate
         // Stage 1: latch one x per feature (shared across all D_TOKEN lanes).
         for (gj = 0; gj < N_FEATURE; gj = gj + 1) begin : g_xlatch
-            always @(posedge clk)
+            always_ff @(posedge clk)
                 x_q[gj] <= $signed(x_row[gj*DATA_WIDTH +: DATA_WIDTH]);
         end
 
         // Stages 2-3: per (feature j, token k) multiply -> bias add -> requant.
         for (gj = 0; gj < N_FEATURE; gj = gj + 1) begin : g_lane_j
             for (gk = 0; gk < D_TOKEN; gk = gk + 1) begin : g_lane_k
-                always @(posedge clk) begin
-                    // Stage 2: product (uses freshly latched x and static weight).
-                    prod_q[gj*D_TOKEN + gk] <= x_q[gj] * weight_mem[gj*D_TOKEN + gk];
-                    // Stage 3: add aligned bias, requantize to int8.
-                    tok_q[gj*D_TOKEN + gk]  <=
-                        requant(prod_q[gj*D_TOKEN + gk] + align_bias(bias_mem[gj*D_TOKEN + gk]));
-                end
+                reg signed [PROD_W-1:0] prod_c;  // stage 2 combinational product
+                reg signed [ACC_W-1:0]  acc_c;   // stage 3 combinational bias-add
+
+                // Stage 2: product (uses freshly latched x and static weight).
+                always_comb prod_c = x_q[gj] * weight_mem[gj*D_TOKEN + gk];
+                always_ff @(posedge clk)
+                    prod_q[gj*D_TOKEN + gk] <= prod_c;
+
+                // Stage 3: add aligned bias, requantize to int8.
+                always_comb acc_c =
+                    prod_q[gj*D_TOKEN + gk] + align_bias(bias_mem[gj*D_TOKEN + gk]);
+                always_ff @(posedge clk)
+                    tok_q[gj*D_TOKEN + gk] <= requant(acc_c);
+
                 assign out_tokens[(gj*D_TOKEN + gk)*DATA_WIDTH +: DATA_WIDTH] =
                         tok_q[gj*D_TOKEN + gk];
             end
