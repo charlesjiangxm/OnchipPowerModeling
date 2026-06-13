@@ -85,7 +85,7 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(d_token)
         self.ffn = nn.Sequential(
             nn.Linear(d_token, d_ffn),
-            nn.GELU(),
+            nn.RELU(),
             nn.Dropout(dropout),
             nn.Linear(d_ffn, d_token),
         )

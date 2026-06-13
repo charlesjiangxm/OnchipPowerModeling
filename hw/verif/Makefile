@@ -39,6 +39,15 @@ FLIST_MHA   := multihead_attention_filelist.f
 SIMV_MHA    := simv_mha
 FSDB_MHA    := multihead_attention.fsdb
 
+# ---- FeedForwardNetwork block (position-wise FFN, ReLU activation) ---------
+RTL_FFN     := ../rtl/feed_forward_network.v
+TB_FFN      := tb_feed_forward_network.sv
+DPI_FFN     := feed_forward_network_dpi.c
+CMODEL_FFN  := $(MODELDIR)/feed_forward_network_cmodel.c
+FLIST_FFN   := feed_forward_network_filelist.f
+SIMV_FFN    := simv_ffn
+FSDB_FFN    := feed_forward_network.fsdb
+
 # -kdb pairs with -debug_access+all: writes the Verdi Knowledge DB
 # (simv.daidir/kdb) so the FSDB loads with full source / code hierarchy.
 VCS_FLAGS := -full64 -sverilog -debug_access+all -kdb -timescale=1ns/1ps
@@ -52,7 +61,8 @@ SIMARGS   ?=
 NOVAS_FLAGS ?=
 
 .PHONY: all comp run verdi cmodel \
-        all_mha comp_mha run_mha verdi_mha cmodel_mha clean
+        all_mha comp_mha run_mha verdi_mha cmodel_mha \
+        all_ffn comp_ffn run_ffn verdi_ffn cmodel_ffn clean
 
 all: comp run
 
@@ -100,7 +110,33 @@ verdi_mha:
 cmodel_mha:
 	$(GCC) -DMA_STANDALONE -O2 -std=c11 $(CMODEL_MHA) -o macm -lm && ./macm
 
+# ---- FeedForwardNetwork targets --------------------------------------------
+#   make all_ffn                                  # compile + run the DPI check
+#   make verdi_ffn                                # open feed_forward_network.fsdb
+#   make all_ffn VCS_DEFINES=+define+FFN_DFFN=128 # sweep d_ffn
+#   make run_ffn SIMARGS=+seed=12345              # pick a random seed
+all_ffn: comp_ffn run_ffn
+
+comp_ffn:
+	$(VCS) $(VCS_FLAGS) $(VCS_DEFINES) \
+	    -CFLAGS "$(CFLAGS)" \
+	    -f $(FLIST_FFN) \
+	    $(DPI_FFN) $(CMODEL_FFN) \
+	    $(NOVAS_FLAGS) \
+	    -l comp_ffn.log -o $(SIMV_FFN)
+
+run_ffn:
+	./$(SIMV_FFN) +fsdb+autoflush $(SIMARGS) -l run_ffn.log
+
+verdi_ffn:
+	$(VERDI) -dbdir $(SIMV_FFN).daidir/kdb -ssf $(FSDB_FFN) &
+
+# Simulator-free: int8 ReLU FFN vs an independent fixed-point reference (gcc).
+cmodel_ffn:
+	$(GCC) -DFFN_STANDALONE -O2 -std=c11 $(CMODEL_FFN) -o ffncm -lm && ./ffncm
+
 clean:
-	rm -rf $(SIMV) $(SIMV_MHA) $(SIMV).daidir $(SIMV_MHA).daidir \
+	rm -rf $(SIMV) $(SIMV_MHA) $(SIMV_FFN) \
+	       $(SIMV).daidir $(SIMV_MHA).daidir $(SIMV_FFN).daidir \
 	       csrc ucli.key vc_hdrs.h \
-	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm DVEfiles .inter.vpd.uvm
+	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm ffncm DVEfiles .inter.vpd.uvm
