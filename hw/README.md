@@ -252,3 +252,141 @@ Makefile to link the Verdi PLI (`novas.tab`/`pli.a` `+vpi +memcbk +vcsd`).
 cd hw/syn/script && ./run_dc_layer_norm.csh -mode syn -d_token 32
 # Outputs are written under hw/syn.
 ```
+
+---
+
+# MultiheadAttention — Verilog (int8 inference)
+
+Hardware implementation of the FT-Transformer **self-attention** block in
+[`src/models/ft_transformer.py`](../src/models/ft_transformer.py)
+(`self.attn = nn.MultiheadAttention(embed_dim=d_token, num_heads=n_heads,
+batch_first=True)`, called as `self.attn(x, x, x, ...)`; inference, `dropout=0`,
+`bias=True`). For one tokenized example `x` of shape `(S, E)`:
+
+```python
+Q,K,V = x@Wq^T+bq, x@Wk^T+bk, x@Wv^T+bv          # in_proj (E->E per head split)
+A     = softmax(Q@K^T / sqrt(HD), dim=-1)         # per head, over the S tokens
+y     = concat_h(A @ V) @ Wo^T + bo               # out_proj
+```
+
+Here `E = D_TOKEN` is the embedding dim, `H = N_HEADS`, `HD = E/H`, and **`S = 1 +
+n_features` is the sequence length** (CLS token + one token per feature). Attention
+mixes information *across* all `S` tokens (an `S×S` score matrix, an `S`-way softmax,
+an `S`-way weighted sum), so — like `N_FEATURE` for the tokenizer and `D_TOKEN` for
+LayerNorm — `S` is a **compile-time parameter** (`SEQ_LEN`), fixed for a trained
+model. One full `(S, E)` example is consumed per clock (packed `x_seq`, with
+`q=k=v=x`) and one full `(S, E)` result is produced per clock after a fixed latency —
+**II = 1**. Only the attention output is produced (not the attention-weight tensor).
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `rtl/multihead_attention.v` | Synthesizable DUT (FF weight regfile → in_proj → per-head scores+scale → integer softmax → context → out_proj, fully-parallel II=1 pipeline). Verilog-2005 dialect using `always_ff`/`always_comb` (no `logic`); compile with `vcs -sverilog`. |
+| `rtl/multihead_attention_registered.v` | Synthesis wrapper adding input/output registers (flop-to-flop boundary for DC). |
+| `../src/models/multihead_attention_cmodel.{c,h}` | **Pure** behavioral C reference (no hardware/sim detail). The golden model — the RTL output equals it bit-for-bit. Has a `-DMA_STANDALONE` self-test vs a float reference. |
+| `verif/multihead_attention_dpi.c` | Thin DPI-C glue exposing `multihead_attention_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
+| `verif/tb_multihead_attention.sv` | End-to-end self-checking SV testbench: random sequences + random weights, scoreboard, **bit-exact** compare vs the C model over DPI-C, II=1 check, FSDB dump. |
+| `verif/Makefile` (`*_mha` targets), `verif/multihead_attention_filelist.f` | VCS-only compile/run/verdi flow. |
+| `syn/script/dc_multihead_attention.tcl`, `syn/script/run_dc_multihead_attention.csh` | Design Compiler scaffold (mirrors the LayerNorm flow). |
+
+## Numeric model (int8, inference only)
+
+Same Q1.`FRAC_BITS` symmetric-quant conventions (zero-point 0). Each matmul
+accumulates int8·int8 products exactly, adds bias (int8`<<FRAC_BITS`), then
+requantizes to int8 (round-half-up, arithmetic shift, saturate). Softmax is
+**integer-only** and identical in the C model and RTL:
+
+```
+raw[qi][kj] = sum_d Qh[qi][d]*Kh[kj][d]                 # Q2.(2*FRAC), kept wide
+sm          = round( raw * SCALE ) >> (2*FRAC+SCALE_FRAC-SM_FRAC)   # Q(SM_FRAC)
+                                                        # SCALE = round(2^SCALE_FRAC/sqrt(HD))
+d           = sm - rowmax (<=0)                         # numerical-stability subtract
+e           = exp(d) = 2^-z * (C2*f^2 + C1*f + C0)      # base-2: z a shift, 2^-f a Q16 quad
+Se          = sum_kj e[kj];  inv = round(2^RECIP_FRAC / Se)
+context[d]  = sat_int8( round( (sum_kj e[kj]*Vh[kj][d]) * inv ) >> RECIP_FRAC )
+```
+
+The `exp` quadratic (`C2,C1,C0 = 11279,-44047,65536` in Q16, endpoint-exact) tracks
+the float softmax to **≤ ~6.5e-4** on the weights. The reciprocal is one unsigned
+divide per `(head,row)`, the layer_norm idiom. End-to-end the int8 output tracks a
+float reference to a few LSB on random data (typical < 1 LSB; the residual is the
+exp-poly error amplified through `out_proj`); the strict guarantee is bit-exactness
+between the C model and the RTL.
+
+## Parameters
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `D_TOKEN` (E) | 32 | embedding dim |
+| `N_HEADS` (H) | 8  | number of heads (`HD = E/H = 4`) |
+| `SEQ_LEN` (S) | 16 | sequence length = `1 + n_features` |
+| `DATA_WIDTH`  | 8  | int8 |
+| `FRAC_BITS`   | 7  | Q1.7 |
+| `SCALE_FRAC`  | 14 | fractional bits of `SCALE` |
+| `SM_FRAC`     | 8  | fractional bits of the softmax-input score |
+| `RECIP_FRAC`  | 24 | reciprocal (1/Se) fractional bits |
+| `SCALE`       | 8192 | `round(2^SCALE_FRAC / sqrt(HD))`; **HD-dependent** (8192 @ HD=4, 5793 @ HD=8). The TB and DC script recompute it; pass the SAME value to the C model. |
+
+> `EXP_FRAC=16` and the exp constants (`LOG2E=94548`, `C2/C1/C0`) are fixed in both
+> the RTL and the C model.
+
+## Ports
+
+| Dir | Name | Width | Notes |
+|-----|------|-------|-------|
+| in  | `clk`/`rst_n` | 1 | async assert / sync deassert; clears the valid pipeline |
+| in  | `wr_en`   | 1 | coefficient write strobe |
+| in  | `wr_sel`  | 2 | `0`=in_proj_weight, `1`=in_proj_bias, `2`=out_proj.weight, `3`=out_proj.bias |
+| in  | `wr_addr` | `clog2(3*E*E)` | linear index in the selected array |
+| in  | `wr_data` | `DATA_WIDTH` | signed int8 coefficient |
+| in  | `in_valid`| 1 | a valid `x_seq` is present this cycle |
+| in  | `x_seq`   | `S*E*DATA_WIDTH` | packed: `x[s][e] = x_seq[(s*E+e)*W +: W]` |
+| out | `out_valid` | 1 | high when `y_seq` is valid |
+| out | `y_seq`   | `S*E*DATA_WIDTH` | packed: `y[s][e] = y_seq[(s*E+e)*W +: W]` |
+
+**Weight layout (PyTorch `Linear` stores `(out,in)`, `y=x@W^T`):**
+`in_proj_weight` is `(3E,E)` with rows `0..E-1`=Wq, `E..2E-1`=Wk, `2E..3E-1`=Wv (addr
+`row*E+col`); `out_proj.weight` is `(E,E)` (addr `oe*E+k`). Load one coefficient per
+clock through the write-only port; hold weights static during inference.
+
+## Verification
+
+**C-model self-test (runs anywhere, no simulator):**
+
+```
+cd hw/verif && make cmodel_mha
+# PASS: integer attention tracks the float reference.  (softmax weight err <= 1e-3)
+```
+
+**End-to-end RTL-vs-C-model over DPI-C (VCS + Verdi):**
+
+```
+cd hw/verif
+make all_mha                               # compile + run; expect:
+#   PASS: N sequences (E=32, H=8, S=16) match C-model bit-for-bit; II=1 over 24-beat burst.
+make verdi_mha                             # open multihead_attention.fsdb with full KDB hierarchy
+make all_mha VCS_DEFINES=+define+MA_S=8    # sweep seq_len  (also MA_E / MA_H; set +define+MA_SCALE for non-default HD)
+make run_mha SIMARGS=+seed=12345           # pick a random seed
+```
+
+The TB loads random int8 weights through the write port, streams random sequences,
+captures each output after the pipeline latency, calls the C model through DPI-C on
+the same inputs, and requires **every int8 element to match exactly**. `-kdb
+-debug_access+all` write the Verdi knowledge database under `simv_mha.daidir/kdb`.
+
+**Synthesis (Design Compiler):**
+
+```
+cd hw/syn/script && ./run_dc_multihead_attention.csh -mode syn -d_token 32 -n_heads 8 -seq_len 16
+# Outputs are written under hw/syn/batch_multihead_attention_*.
+```
+
+## Resource note
+
+Fully parallel to sustain II = 1 over whole `(S,E)` examples (defaults
+`E=32,H=8,HD=4,S=16`): ≈ **84.5k int8 multipliers** (in_proj `3·S·E·E`=49k + scores
+`H·S·S·HD`=8k + context 8k + out_proj `S·E·E`=16k + scale/recip ~2.5k) and ≈ **33.8k
+coefficient FFs** (`(4E²+4E)·DATA_WIDTH`). The in_proj/out_proj dominate. A folded
+variant (II > 1, reusing the lane datapath) is out of scope given the
+1-example-per-clock requirement.

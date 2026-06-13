@@ -30,6 +30,15 @@ CMODEL_C := $(MODELDIR)/layer_norm_cmodel.c
 SIMV     := simv
 FSDB     := layer_norm.fsdb
 
+# ---- MultiheadAttention block (self-attention) -----------------------------
+RTL_MHA     := ../rtl/multihead_attention.v
+TB_MHA      := tb_multihead_attention.sv
+DPI_MHA     := multihead_attention_dpi.c
+CMODEL_MHA  := $(MODELDIR)/multihead_attention_cmodel.c
+FLIST_MHA   := multihead_attention_filelist.f
+SIMV_MHA    := simv_mha
+FSDB_MHA    := multihead_attention.fsdb
+
 # -kdb pairs with -debug_access+all: writes the Verdi Knowledge DB
 # (simv.daidir/kdb) so the FSDB loads with full source / code hierarchy.
 VCS_FLAGS := -full64 -sverilog -debug_access+all -kdb -timescale=1ns/1ps
@@ -42,7 +51,8 @@ SIMARGS   ?=
 #                    $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a +vpi +memcbk +vcsd
 NOVAS_FLAGS ?=
 
-.PHONY: all comp run verdi cmodel clean
+.PHONY: all comp run verdi cmodel \
+        all_mha comp_mha run_mha verdi_mha cmodel_mha clean
 
 all: comp run
 
@@ -65,6 +75,32 @@ verdi:
 cmodel:
 	$(GCC) -DLN_STANDALONE -O2 -std=c11 $(CMODEL_C) -o lncm -lm && ./lncm
 
+# ---- MultiheadAttention targets --------------------------------------------
+#   make all_mha                              # compile + run the DPI check
+#   make verdi_mha                            # open multihead_attention.fsdb
+#   make all_mha VCS_DEFINES=+define+MA_S=8   # sweep seq_len
+#   make run_mha SIMARGS=+seed=12345          # pick a random seed
+all_mha: comp_mha run_mha
+
+comp_mha:
+	$(VCS) $(VCS_FLAGS) $(VCS_DEFINES) \
+	    -CFLAGS "$(CFLAGS)" \
+	    -f $(FLIST_MHA) \
+	    $(DPI_MHA) $(CMODEL_MHA) \
+	    $(NOVAS_FLAGS) \
+	    -l comp_mha.log -o $(SIMV_MHA)
+
+run_mha:
+	./$(SIMV_MHA) +fsdb+autoflush $(SIMARGS) -l run_mha.log
+
+verdi_mha:
+	$(VERDI) -dbdir $(SIMV_MHA).daidir/kdb -ssf $(FSDB_MHA) &
+
+# Simulator-free: integer attention vs float reference (needs gcc).
+cmodel_mha:
+	$(GCC) -DMA_STANDALONE -O2 -std=c11 $(CMODEL_MHA) -o macm -lm && ./macm
+
 clean:
-	rm -rf $(SIMV) $(SIMV).daidir csrc ucli.key vc_hdrs.h \
-	       *.log *.fsdb *.vpd novas.* verdiLog* lncm DVEfiles .inter.vpd.uvm
+	rm -rf $(SIMV) $(SIMV_MHA) $(SIMV).daidir $(SIMV_MHA).daidir \
+	       csrc ucli.key vc_hdrs.h \
+	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm DVEfiles .inter.vpd.uvm
