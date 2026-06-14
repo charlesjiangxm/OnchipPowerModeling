@@ -118,6 +118,9 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
+  ${RTL_ROOT}/requant.v \
+  ${RTL_ROOT}/align_bias.v \
+  ${RTL_ROOT}/isqrt.v \
   ${RTL_ROOT}/layer_norm.v \
   ${WRAPPER_ROOT}/layer_norm_wrapper.v \
 ]

@@ -117,9 +117,9 @@ module tb_multihead_attention;
         .RECIP_FRAC(RECIP_FRAC), .SCALE(SCALE)
     ) dut (
         .clk(clk), .rst_n(rst_n),
-        .wr_en(wr_en), .wr_sel(wr_sel), .wr_addr(wr_addr), .wr_data(wr_data),
-        .in_valid(in_valid), .x_seq(x_seq),
-        .out_valid(out_valid), .y_seq(y_seq)
+        .i_wr_en(wr_en), .i_wr_sel(wr_sel), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
+        .i_valid(in_valid), .i_x_seq(x_seq),
+        .o_valid(out_valid), .o_y_seq(y_seq)
     );
 
     // ---- clock + free-running cycle counter --------------------------

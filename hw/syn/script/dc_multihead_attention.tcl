@@ -126,6 +126,10 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
+  ${RTL_ROOT}/requant.v \
+  ${RTL_ROOT}/align_bias.v \
+  ${RTL_ROOT}/exp_neg.v \
+  ${RTL_ROOT}/score_shift.v \
   ${RTL_ROOT}/multihead_attention.v \
   ${WRAPPER_ROOT}/multihead_attention_wrapper.v \
 ]

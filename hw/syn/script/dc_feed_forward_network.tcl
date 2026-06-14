@@ -114,6 +114,8 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
+  ${RTL_ROOT}/requant.v \
+  ${RTL_ROOT}/align_bias.v \
   ${RTL_ROOT}/feed_forward_network.v \
   ${WRAPPER_ROOT}/feed_forward_network_wrapper.v \
 ]

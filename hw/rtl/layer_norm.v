@@ -1,41 +1,23 @@
-// =====================================================================
-// layer_norm.v                                              (Verilog-2005*)
+//-----------------------------------------------------------------------------
+// layer_norm.v                                                 (Verilog-2005*)
 //
-// Hardware implementation of the FT-Transformer LayerNorm
-// (nn.LayerNorm(d_token) in src/models/ft_transformer.py; norm1/norm2/
-// final_norm). For one token x of D_TOKEN int8 elements with learned int8
-// affine gamma/beta (elementwise_affine=True), this computes, over the
-// D_TOKEN axis (the same math nn.LayerNorm does, eps default 1e-5):
-//
-//     mean = (1/D) * sum(x)
-//     var  = (1/D) * sum((x-mean)^2)            // biased / population
-//     y[i] = (x[i]-mean)/sqrt(var+eps) * gamma[i] + beta[i]
-//
-// Unlike the tokenizer this needs a reduction (mean/var) over the whole
-// token, so one full token is consumed per clock (packed x_vec) and one
-// full token is produced per clock after a fixed latency => II = 1.
-//
-// Numeric model (int8 inference, symmetric quantization, zero-point = 0):
-//   * int8 values are signed Q1.FRAC_BITS (default Q1.7, scale 2^-7).
-//   * the 2^-FRAC input scale and the 1/D mean factor cancel exactly, so
-//     in pure integers:  y_norm[i] = (D*x[i] - S) / sqrt(V + EPS_V),
-//     where  S = sum(x),  V = D*sum(x^2) - S^2  (= D^2 * var_int, >= 0),
-//     EPS_V = round(eps * 2^(2*FRAC) * D^2)  (default 168 for D=32).
-//   * 1/sqrt is done as  r = floor(sqrt(V+EPS_V))  (integer sqrt, clamp >=1)
-//     then  inv = round(2^RECIP_FRAC / r)  (one unsigned reciprocal/token).
-//   * per lane:  acc = (D*x[i]-S)*inv * gamma[i] + (beta[i] << RECIP_FRAC),
-//     then requantize to int8: round-half-up, arithmetic right shift by
-//     SHIFT = FRAC_BITS + RECIP_FRAC - OUT_FRAC, saturate to int8 range.
-//
-// gamma/beta live in an FF-based register file (read in parallel each cycle)
-// loaded through a write-only port, exactly like numerical_feature_tokenizer.
-//
-// (*) Verilog-2005 dialect, but uses the SystemVerilog procedural keywords
-// always_ff / always_comb (compile with `vcs -sverilog`). No `logic` is used
-// -- every signal is `reg`/`wire` -- and the design uses clk / rst_n.
-// hw/model: behavioral twin in src/models/layer_norm_cmodel.c (bit-exact).
-// =====================================================================
-
+// title    : FT-Transformer LayerNorm over D_TOKEN axis (int8 inference)
+//            (nn.LayerNorm(d_token): norm1/norm2/final_norm, eps=1e-5)
+// math     : mean = (1/D)*sum(x); var = (1/D)*sum((x-mean)^2)   (population)
+//            y[i] = (x[i]-mean)/sqrt(var+eps) * gamma[i] + beta[i]
+// numeric  : 2^-FRAC and 1/D cancel -> y_norm[i] = (D*x[i]-S)/sqrt(V+EPS_V),
+//            S = sum(x), V = D*sum(x^2)-S^2 (= D^2*var_int >= 0),
+//            EPS_V = round(eps*2^(2*FRAC)*D^2). r = floor(sqrt(V+EPS_V)) (>=1),
+//            inv = round(2^RECIP_FRAC / r). per lane:
+//            acc = (D*x[i]-S)*inv*gamma[i] + (beta[i]<<RECIP_FRAC), then requant.
+// datapath : reduce S/SS -> V -> integer sqrt (U_ISQRT) -> reciprocal
+//            -> per-lane affine multiply-add + requant (U_REQUANT/U_ALIGN_BETA).
+// schedule : one x_vec in / one y_vec out per clock, latency 5, II = 1.
+// params   : D_TOKEN, DATA_WIDTH, FRAC_BITS, RECIP_FRAC, OUT_FRAC, EPS_V.
+// language : Verilog-2005 + SystemVerilog always_ff/always_comb (no logic);
+//            compile with `vcs -sverilog`. clk / rst_n (async assert, sync deassert).
+// hw/model : behavioral twin src/models/layer_norm_cmodel.c (bit-exact).
+//-----------------------------------------------------------------------------
 `default_nettype none
 module layer_norm #(
     parameter D_TOKEN    = 32,   // token dimension (length of the normalized axis)
@@ -45,207 +27,177 @@ module layer_norm #(
     parameter OUT_FRAC   = 7,    // output fractional bits (=FRAC_BITS => strict Q1.7)
     parameter EPS_V      = 168,  // integer epsilon = round(eps*2^(2*FRAC)*D^2), eps=1e-5
     // ---- derived (do not override) ----
-    parameter ADDR_W     = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN)
+    parameter ADDR_W     = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN)  // write-address width
 ) (
-    input  wire                              clk,
-    input  wire                              rst_n,       // async assert, sync deassert
-    input  wire                              wr_en,       // coefficient write strobe
-    input  wire                              wr_is_beta,  // 0=gamma, 1=beta
-    input  wire [ADDR_W-1:0]                 wr_addr,     // lane index i
-    input  wire [DATA_WIDTH-1:0]             wr_data,     // signed int8 coefficient
-    input  wire                              in_valid,    // x_vec valid this cycle
-    input  wire [D_TOKEN*DATA_WIDTH-1:0]     x_vec,       // packed: x[i] = x_vec[i*W +: W]
-    output wire                              out_valid,   // y_vec valid
-    output wire [D_TOKEN*DATA_WIDTH-1:0]     y_vec        // packed: y[i] = y_vec[i*W +: W]
+    // control port
+    input  wire                           clk,           // clock
+    input  wire                           rst_n,         // async assert, sync deassert
+    input  wire                           i_wr_en,       // coefficient write strobe
+    input  wire                           i_wr_is_beta,  // 0=gamma, 1=beta
+    input  wire [ADDR_W     -1:0]         i_wr_addr,     // lane index i
+    input  wire [DATA_WIDTH -1:0]         i_wr_data,     // signed int8 coefficient
+    input  wire                           i_valid,       // x_vec valid this cycle
+    // data port
+    input  wire [D_TOKEN*DATA_WIDTH -1:0] i_x_vec,       // packed: x[i] = i_x_vec[i*W +: W]
+    output wire                           o_valid,       // y_vec valid
+    output wire [D_TOKEN*DATA_WIDTH -1:0] o_y_vec        // packed: y[i] = o_y_vec[i*W +: W]
 );
 
-    // ---- derived sizes (sized to hold EXACT values, no truncation) ----
+    integer i;     // procedural loop index
+    genvar  g;     // per-lane generate index
+
+    localparam PIPE     = 5;                                // valid-pipeline / latency depth
     localparam CLOG2_D  = ($clog2(D_TOKEN) < 1) ? 1 : $clog2(D_TOKEN);
-    localparam S_W      = DATA_WIDTH + CLOG2_D + 1;        // signed sum S = sum(x)
-    localparam SS_W     = 2*DATA_WIDTH + CLOG2_D;          // unsigned sum of squares
-    localparam VEPS_W   = 2*DATA_WIDTH + 2*CLOG2_D;        // unsigned V+EPS_V (>= D^2*var bits +1)
-    localparam R_W      = DATA_WIDTH + CLOG2_D;            // unsigned r = floor(sqrt(Veps))
-    localparam INV_W    = RECIP_FRAC + 1;                  // unsigned inv (max 2^RECIP_FRAC at r=1)
-    localparam NUM_W    = DATA_WIDTH + CLOG2_D + 2;        // signed num = D*x[i] - S
-    localparam ZNORM_W  = NUM_W + INV_W + 1;               // signed num*inv
-    localparam ACC_W    = ZNORM_W + DATA_WIDTH + 2;        // signed znorm*gamma + (beta<<RECIP_FRAC)
+    localparam S_W      = DATA_WIDTH + CLOG2_D + 1;         // signed sum S = sum(x)
+    localparam SS_W     = 2*DATA_WIDTH + CLOG2_D;           // unsigned sum of squares
+    localparam VEPS_W   = 2*DATA_WIDTH + 2*CLOG2_D;         // unsigned V+EPS_V
+    localparam R_W      = DATA_WIDTH + CLOG2_D;             // unsigned r = floor(sqrt(Veps))
+    localparam INV_W    = RECIP_FRAC + 1;                   // unsigned inv (max 2^RECIP_FRAC at r=1)
+    localparam NUM_W    = DATA_WIDTH + CLOG2_D + 2;         // signed num = D*x[i] - S
+    localparam ZNORM_W  = NUM_W + INV_W + 1;                // signed num*inv
+    localparam ACC_W    = ZNORM_W + DATA_WIDTH + 2;         // signed znorm*gamma + (beta<<RECIP_FRAC)
     localparam SHIFT    = FRAC_BITS + RECIP_FRAC - OUT_FRAC; // requant right-shift amount
 
-    localparam ISQRT_ITERS = (VEPS_W + 1) / 2;            // fixed (synthesizable) sqrt iterations
-    localparam SQW         = VEPS_W + 2;                  // working width for the sqrt datapath
+    localparam [INV_W+1 :0] RECIP_ONE = (1 <<< RECIP_FRAC); // 2^RECIP_FRAC
 
-    // requant constants (in the wide signed accumulator domain).
-    localparam signed [ACC_W-1:0] ROUND   = (SHIFT > 0) ? (1 <<< (SHIFT-1)) : 0;
-    localparam signed [ACC_W-1:0] OUT_MAX = (1 <<< (DATA_WIDTH-1)) - 1;   // +127
-    localparam signed [ACC_W-1:0] OUT_MIN = -(1 <<< (DATA_WIDTH-1));      // -128
-    localparam        [INV_W+1:0] RECIP_ONE = (1 <<< RECIP_FRAC);         // 2^RECIP_FRAC
+    // ---- coefficient register file (FF-based, write-only port) --------------
+    reg signed [DATA_WIDTH -1:0] gamma_mem [D_TOKEN-1 :0];   // affine scale gamma
+    reg signed [DATA_WIDTH -1:0] beta_mem  [D_TOKEN-1 :0];   // affine shift  beta
 
-    // ---- helper functions ---------------------------------------------
-    // floor(sqrt(n)) by the classic bit-by-bit method, fully unrolled to a
-    // constant ISQRT_ITERS for synthesis. All-unsigned (the >= compare must
-    // be unsigned). Matches isqrt_floor() in layer_norm_cmodel.c bit-for-bit.
-    function [R_W-1:0] isqrt;
-        input [VEPS_W-1:0] n_in;
-        reg [SQW-1:0] n, one, t, res;
-        integer it;
-        begin
-            n   = n_in;
-            res = {SQW{1'b0}};
-            one = {{(SQW-1){1'b0}}, 1'b1} <<< (2*(ISQRT_ITERS-1));
-            for (it = 0; it < ISQRT_ITERS; it = it + 1) begin
-                t = res + one;
-                if (n >= t) begin
-                    n   = n - t;
-                    res = (res >> 1) + one;
-                end else begin
-                    res = res >> 1;
-                end
-                one = one >> 2;
-            end
-            isqrt = res[R_W-1:0];
-        end
-    endfunction
-
-    // sign-extend an int8 beta to ACC_W, then shift left by RECIP_FRAC to
-    // align with the (num*inv*gamma) fractional scale.
-    function signed [ACC_W-1:0] align_beta;
-        input signed [DATA_WIDTH-1:0] b;
-        reg   signed [ACC_W-1:0] be;
-        begin
-            be         = b;                  // sign-extend to ACC_W
-            align_beta = be <<< RECIP_FRAC;  // shift inside ACC_W (no loss)
-        end
-    endfunction
-
-    // round-half-up, arithmetic right shift by SHIFT, saturate to int8.
-    function signed [DATA_WIDTH-1:0] requant;
-        input signed [ACC_W-1:0] acc;
-        reg   signed [ACC_W-1:0] s, r;
-        begin
-            s = acc + ROUND;
-            r = s >>> SHIFT;
-            if      (r > OUT_MAX) r = OUT_MAX;
-            else if (r < OUT_MIN) r = OUT_MIN;
-            requant = r[DATA_WIDTH-1:0];
-        end
-    endfunction
-
-    // ---- coefficient register file (FF-based, write-only port) --------
-    reg signed [DATA_WIDTH-1:0] gamma_mem [0:D_TOKEN-1];
-    reg signed [DATA_WIDTH-1:0] beta_mem  [0:D_TOKEN-1];
-
-    always_ff @(posedge clk) begin
-        if (wr_en) begin
-            if (wr_is_beta) beta_mem[wr_addr]  <= wr_data;
-            else            gamma_mem[wr_addr] <= wr_data;
+    always_ff @(posedge clk) begin : DFF_WR
+        if (i_wr_en) begin
+            if (i_wr_is_beta) beta_mem[i_wr_addr]  <= i_wr_data;
+            else              gamma_mem[i_wr_addr] <= i_wr_data;
         end
     end
 
-    // ---- valid pipeline (resettable; datapath self-flushes via valid) -
-    reg v1, v2, v3, v4, v5;
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            v1 <= 1'b0; v2 <= 1'b0; v3 <= 1'b0; v4 <= 1'b0; v5 <= 1'b0;
-        end else begin
-            v1 <= in_valid; v2 <= v1; v3 <= v2; v4 <= v3; v5 <= v4;
-        end
-    end
-    assign out_valid = v5;
+    // ---- valid pipeline (resettable; datapath self-flushes via valid) -------
+    reg [PIPE -1:0] valid_ff;   // PIPE-stage valid shift register
 
-    // ---- stage 0 (combinational): unpack x, reduce to S and SS --------
-    reg signed [DATA_WIDTH-1:0] x_in  [0:D_TOKEN-1];
-    reg signed [S_W-1:0]        s_comb;
-    reg        [SS_W-1:0]       ss_comb;
-    reg        [2*DATA_WIDTH-1:0] sq;
-    integer ci;
-    always_comb begin
+    always_ff @(posedge clk or negedge rst_n) begin : DFF_VLD
+        if (!rst_n) valid_ff <= {PIPE{1'b0}};
+        else        valid_ff <= {valid_ff[PIPE-2:0], i_valid};
+    end
+    assign o_valid = valid_ff[PIPE-1];
+
+    // ---- stage 0 (combinational): unpack x, reduce to S and SS --------------
+    reg signed [DATA_WIDTH   -1:0] x_in [D_TOKEN-1 :0];   // unpacked x
+    reg signed [S_W          -1:0] s_comb;                // sum(x)
+    reg        [SS_W         -1:0] ss_comb;               // sum(x^2)
+    reg        [2*DATA_WIDTH -1:0] sq;                    // x[i]^2
+
+    always_comb begin : CMB_RED
         s_comb  = {S_W{1'b0}};
         ss_comb = {SS_W{1'b0}};
-        for (ci = 0; ci < D_TOKEN; ci = ci + 1) begin
-            x_in[ci] = $signed(x_vec[ci*DATA_WIDTH +: DATA_WIDTH]);
-            sq       = x_in[ci] * x_in[ci];           // >= 0, exact in 2*DATA_WIDTH bits
-            s_comb   = s_comb + x_in[ci];
-            ss_comb  = ss_comb + sq;
+        for (i = 0; i < D_TOKEN; i = i + 1) begin
+            x_in[i] = $signed(i_x_vec[i*DATA_WIDTH +: DATA_WIDTH]);
+            sq      = x_in[i] * x_in[i];   // >= 0, exact in 2*DATA_WIDTH bits
+            s_comb  = s_comb + x_in[i];
+            ss_comb = ss_comb + sq;
         end
     end
 
-    // ---- stage 1 regs: latch x, S, SS ---------------------------------
-    reg signed [DATA_WIDTH-1:0] xq1 [0:D_TOKEN-1];
-    reg signed [S_W-1:0]        sr1;
-    reg        [SS_W-1:0]       ssr1;
-    integer i1;
-    always_ff @(posedge clk) begin
-        sr1  <= s_comb;
-        ssr1 <= ss_comb;
-        for (i1 = 0; i1 < D_TOKEN; i1 = i1 + 1) xq1[i1] <= x_in[i1];
+    // ---- stage 1 regs: latch x, S, SS ---------------------------------------
+    reg signed [DATA_WIDTH -1:0] xq1_ff [D_TOKEN-1 :0];   // x carried to stage 1
+    reg signed [S_W        -1:0] sr1_ff;                  // S  at stage 1
+    reg        [SS_W       -1:0] ssr1_ff;                 // SS at stage 1
+
+    always_ff @(posedge clk) begin : DFF_S1
+        sr1_ff  <= s_comb;
+        ssr1_ff <= ss_comb;
+        for (i = 0; i < D_TOKEN; i = i + 1) xq1_ff[i] <= x_in[i];
     end
 
-    // ---- stage 2 (combinational): V, Veps, r = floor(sqrt(Veps)) ------
-    reg [VEPS_W-1:0] dss_comb, ssq_comb, v_comb, veps_comb;
-    reg [R_W-1:0]    r_comb;
-    always_comb begin
-        dss_comb  = D_TOKEN * ssr1;          // D * sum(x^2)
-        ssq_comb  = sr1 * sr1;               // S^2 (>= 0)
-        v_comb    = dss_comb - ssq_comb;     // V = D*SS - S^2 >= 0 (Cauchy-Schwarz)
-        veps_comb = v_comb + EPS_V;
-        r_comb    = isqrt(veps_comb);
-        if (r_comb == {R_W{1'b0}}) r_comb = {{(R_W-1){1'b0}}, 1'b1};  // clamp r >= 1
+    // ---- stage 2 (combinational): V, Veps, r = floor(sqrt(Veps)) ------------
+    wire [VEPS_W -1:0] dss;      // D * sum(x^2)
+    wire [VEPS_W -1:0] ssq;      // S^2 (>= 0)
+    wire [VEPS_W -1:0] v_int;    // V = D*SS - S^2 >= 0 (Cauchy-Schwarz)
+    wire [VEPS_W -1:0] veps;     // V + EPS_V
+    wire [R_W    -1:0] r_isqrt;  // floor(sqrt(Veps))
+    wire [R_W    -1:0] r_comb;   // r clamped >= 1
+
+    assign dss   = D_TOKEN * ssr1_ff;   // D * sum(x^2)
+    assign ssq   = sr1_ff * sr1_ff;     // S^2 (signed*signed, result >= 0)
+    assign v_int = dss - ssq;
+    assign veps  = v_int + EPS_V;
+    isqrt #(
+        .VEPS_W (VEPS_W),
+        .R_W    (R_W)
+    ) U_ISQRT (
+        .i_n (veps),
+        .o_r (r_isqrt)
+    );
+    assign r_comb = (r_isqrt == {R_W{1'b0}}) ? {{(R_W-1){1'b0}}, 1'b1} : r_isqrt; // clamp r >= 1
+
+    // ---- stage 2 regs: pipe x, S; register r --------------------------------
+    reg signed [DATA_WIDTH -1:0] xq2_ff [D_TOKEN-1 :0];   // x carried to stage 2
+    reg signed [S_W        -1:0] sr2_ff;                  // S at stage 2
+    reg        [R_W        -1:0] rr2_ff;                  // r at stage 2
+
+    always_ff @(posedge clk) begin : DFF_S2
+        sr2_ff <= sr1_ff;
+        rr2_ff <= r_comb;
+        for (i = 0; i < D_TOKEN; i = i + 1) xq2_ff[i] <= xq1_ff[i];
     end
 
-    // ---- stage 2 regs: pipe x, S; register r --------------------------
-    reg signed [DATA_WIDTH-1:0] xq2 [0:D_TOKEN-1];
-    reg signed [S_W-1:0]        sr2;
-    reg        [R_W-1:0]        rr2;
-    integer i2;
-    always_ff @(posedge clk) begin
-        sr2 <= sr1;
-        rr2 <= r_comb;
-        for (i2 = 0; i2 < D_TOKEN; i2 = i2 + 1) xq2[i2] <= xq1[i2];
+    // ---- stage 3 (combinational): inv = round(2^RECIP_FRAC / r) -------------
+    wire [INV_W+1 :0] recip_num;   // 2^RECIP_FRAC + r/2 (round numerator)
+    wire [INV_W -1:0] inv_comb;    // unsigned reciprocal round(2^RECIP_FRAC / r)
+
+    assign recip_num = RECIP_ONE + (rr2_ff >> 1);   // rr2_ff zero-extends to recip_num width
+    assign inv_comb  = recip_num / rr2_ff;
+
+    // ---- stage 3 regs: pipe x, S; register inv ------------------------------
+    reg signed [DATA_WIDTH -1:0] xq3_ff [D_TOKEN-1 :0];   // x carried to stage 3
+    reg signed [S_W        -1:0] sr3_ff;                  // S at stage 3
+    reg        [INV_W      -1:0] invr3_ff;                // inv at stage 3
+
+    always_ff @(posedge clk) begin : DFF_S3
+        sr3_ff   <= sr2_ff;
+        invr3_ff <= inv_comb;
+        for (i = 0; i < D_TOKEN; i = i + 1) xq3_ff[i] <= xq2_ff[i];
     end
 
-    // ---- stage 3 (combinational): inv = round(2^RECIP_FRAC / r) -------
-    reg [INV_W+1:0] recip_num;
-    reg [INV_W-1:0] inv_comb;
-    always_comb begin
-        recip_num = RECIP_ONE + (rr2 >> 1);    // rr2 zero-extends to recip_num width
-        inv_comb  = recip_num / rr2;           // unsigned reciprocal = round(2^RECIP_FRAC / r)
-    end
+    // ---- stage 4/5 regs: per-lane num/znorm then affine + requant -----------
+    reg signed [ZNORM_W    -1:0] znorm4_ff [D_TOKEN-1 :0];   // num*inv at stage 4
+    reg signed [DATA_WIDTH -1:0] y_ff      [D_TOKEN-1 :0];   // requantized output
 
-    // ---- stage 3 regs: pipe x, S; register inv ------------------------
-    reg signed [DATA_WIDTH-1:0] xq3 [0:D_TOKEN-1];
-    reg signed [S_W-1:0]        sr3;
-    reg        [INV_W-1:0]      invr3;
-    integer i3;
-    always_ff @(posedge clk) begin
-        sr3   <= sr2;
-        invr3 <= inv_comb;
-        for (i3 = 0; i3 < D_TOKEN; i3 = i3 + 1) xq3[i3] <= xq2[i3];
-    end
-
-    // ---- stage 4 regs: per-lane num = D*x-S, znorm = num*inv ----------
-    reg signed [ZNORM_W-1:0] znormr4 [0:D_TOKEN-1];
-
-    // ---- stage 5 regs: per-lane affine + requant ----------------------
-    reg signed [DATA_WIDTH-1:0] y_q [0:D_TOKEN-1];
-
-    genvar gi;
     generate
-        for (gi = 0; gi < D_TOKEN; gi = gi + 1) begin : g_lane
-            reg signed [NUM_W-1:0]  num_c;
-            reg signed [ACC_W-1:0]  acc_c;
+        for (g = 0; g < D_TOKEN; g = g + 1) begin : G_LANE
+            wire signed [NUM_W      -1:0] num_c;    // D*x[g] - S
+            wire signed [ACC_W      -1:0] beta_al;  // aligned beta (beta << RECIP_FRAC)
+            wire signed [ACC_W      -1:0] acc_c;    // affine accumulator
+            wire signed [DATA_WIDTH -1:0] y_c;      // requantized lane output
 
             // stage 4: num and normalized value (scaled by 2^RECIP_FRAC)
-            always_comb num_c = D_TOKEN * xq3[gi] - sr3;
-            always_ff @(posedge clk)
-                znormr4[gi] <= $signed(num_c) * $signed({1'b0, invr3});
+            assign num_c = D_TOKEN * xq3_ff[g] - sr3_ff;
+            always_ff @(posedge clk) begin : DFF_ZNORM
+                znorm4_ff[g] <= $signed(num_c) * $signed({1'b0, invr3_ff});
+            end
 
             // stage 5: affine multiply-add then requantize to int8
-            always_comb acc_c = $signed(znormr4[gi]) * $signed(gamma_mem[gi])
-                                + align_beta(beta_mem[gi]);
-            always_ff @(posedge clk)
-                y_q[gi] <= requant(acc_c);
+            align_bias #(
+                .IN_W  (DATA_WIDTH),
+                .OUT_W (ACC_W),
+                .SH    (RECIP_FRAC)
+            ) U_ALIGN_BETA (
+                .i_b       (beta_mem[g]),
+                .o_aligned (beta_al)
+            );
+            assign acc_c = $signed(znorm4_ff[g]) * $signed(gamma_mem[g]) + beta_al;
+            requant #(
+                .ACC_W      (ACC_W),
+                .DATA_WIDTH (DATA_WIDTH),
+                .SHIFT      (SHIFT)
+            ) U_REQUANT (
+                .i_acc (acc_c),
+                .o_q   (y_c)
+            );
+            always_ff @(posedge clk) begin : DFF_Y
+                y_ff[g] <= y_c;
+            end
 
-            assign y_vec[gi*DATA_WIDTH +: DATA_WIDTH] = y_q[gi];
+            assign o_y_vec[g*DATA_WIDTH +: DATA_WIDTH] = y_ff[g];
         end
     endgenerate
 

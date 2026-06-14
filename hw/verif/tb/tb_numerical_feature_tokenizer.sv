@@ -50,9 +50,9 @@ module tb_numerical_feature_tokenizer;
         .N_FEATURE(NF), .D_TOKEN(DT), .DATA_WIDTH(DW), .FRAC_BITS(FRAC)
     ) dut (
         .clk(clk), .rst_n(rst_n),
-        .wr_en(wr_en), .wr_is_bias(wr_is_bias), .wr_addr(wr_addr), .wr_data(wr_data),
-        .in_valid(in_valid), .x_row(x_row),
-        .out_valid(out_valid), .out_tokens(out_tokens)
+        .i_wr_en(wr_en), .i_wr_is_bias(wr_is_bias), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
+        .i_valid(in_valid), .i_x_row(x_row),
+        .o_valid(out_valid), .o_tokens(out_tokens)
     );
 
     // ---- clock and free-running cycle counter -------------------------
