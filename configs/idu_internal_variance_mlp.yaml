@@ -6,16 +6,16 @@ general:
   - db/idu/idu_internal/ISA_THEAD_func.pkl
   - db/idu/idu_internal/MMU_func.pkl
   - db/idu/idu_internal/cache_func.pkl
-  - db/idu/idu_internal/conv_softmax_func.pkl
-  - db/idu/idu_internal/conv_softmax_part000_c906_float16_func.pkl
-  - db/idu/idu_internal/conv_softmax_part000_c906_float32_func.pkl
-  - db/idu/idu_internal/conv_softmax_part000_c906_int8_sym_func.pkl
   - db/idu/idu_internal/coremark_func.pkl
   - db/idu/idu_internal/csr_func.pkl
   - db/idu/idu_internal/debug_func.pkl
   - db/idu/idu_internal/exception_func.pkl
   - db/idu/idu_internal/interrupt_func.pkl
-  testset_x_path: []
+  testset_x_path:
+  - db/idu/idu_internal/conv_softmax_func.pkl
+  - db/idu/idu_internal/conv_softmax_part000_c906_float16_func.pkl
+  - db/idu/idu_internal/conv_softmax_part000_c906_float32_func.pkl
+  - db/idu/idu_internal/conv_softmax_part000_c906_int8_sym_func.pkl
   y_path:
   - db/pwr/ISA_FP_pwr.pkl
   - db/pwr/ISA_INT_pwr.pkl
@@ -38,8 +38,8 @@ preprocessing:
   drop_zero_var: true
   train_val_test_ratio:
   - 0.8
-  - 0.1
-  - 0.1
+  - 0.2
+  - 0.0
   avg_wsize: 128
 feature_selection:
   algorithm: variance

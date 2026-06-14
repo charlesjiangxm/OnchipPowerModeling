@@ -10,7 +10,7 @@ Example - CPU only:
 python script/run_all.py --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
 
 Example - CPU & GPU:
-python script/run_all.py --node-count 4 --node-partitions cpu-share,cpu-share,gpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 2
+python script/run_all.py --node-count 2 --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
 
 """
 
