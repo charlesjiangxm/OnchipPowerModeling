@@ -1,6 +1,6 @@
 #!/bin/tcsh -f
 
-# Run Synopsys Design Compiler synthesis for layer_norm_registered.
+# Run Synopsys Design Compiler synthesis for layer_norm_wrapper.
 # Usage:
 #   ./run_dc_layer_norm.csh -mode syn [-batch_dir <directory>] [parameter overrides]
 #

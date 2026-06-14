@@ -1,6 +1,6 @@
 #!/bin/tcsh -f
 
-# Run Synopsys Design Compiler synthesis for feed_forward_network_registered.
+# Run Synopsys Design Compiler synthesis for feed_forward_network_wrapper.
 # Usage:
 #   ./run_dc_feed_forward_network.csh -mode syn [-batch_dir <directory>] [parameter overrides]
 #

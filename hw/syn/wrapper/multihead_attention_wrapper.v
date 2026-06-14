@@ -1,5 +1,5 @@
 // =====================================================================
-// multihead_attention_registered.v                         (Verilog-2005*)
+// multihead_attention_wrapper.v                            (Verilog-2005*)
 //
 // Synthesis wrapper for multihead_attention. Preserves the DUT interface while
 // adding input and output registers so Design Compiler sees a clean
@@ -11,7 +11,7 @@
 // =====================================================================
 
 `default_nettype none
-module multihead_attention_registered #(
+module multihead_attention_wrapper #(
     parameter D_TOKEN    = 32,
     parameter N_HEADS    = 8,
     parameter SEQ_LEN    = 16,

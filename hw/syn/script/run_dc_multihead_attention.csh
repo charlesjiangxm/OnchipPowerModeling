@@ -1,6 +1,6 @@
 #!/bin/tcsh -f
 
-# Run Synopsys Design Compiler synthesis for multihead_attention_registered.
+# Run Synopsys Design Compiler synthesis for multihead_attention_wrapper.
 # Usage:
 #   ./run_dc_multihead_attention.csh -mode syn [-batch_dir <directory>] [overrides]
 #

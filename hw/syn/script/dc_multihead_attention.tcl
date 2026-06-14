@@ -1,5 +1,5 @@
 ################################################################################
-# Design Compiler synthesis for multihead_attention_registered
+# Design Compiler synthesis for multihead_attention_wrapper
 # (FT-Transformer self-attention; nn.MultiheadAttention used as self.attn).
 #
 # Mirrors dc_layer_norm.tcl. The RTL uses SystemVerilog always_ff/always_comb,
@@ -18,7 +18,8 @@ set SYN_ROOT        [file normalize [file join ${SCRIPT_ROOT} ..]]
 set HW_ROOT         [file normalize [file join ${SYN_ROOT} ..]]
 set PROJ_ROOT       [file normalize [file join ${HW_ROOT} ..]]
 set RTL_ROOT        ${HW_ROOT}/rtl
-set TOP_MODULE_NAME multihead_attention_registered
+set WRAPPER_ROOT    ${SYN_ROOT}/wrapper
+set TOP_MODULE_NAME multihead_attention_wrapper
 
 proc get_env_or_default {name default_value} {
   if {[info exists ::env($name)] && $::env($name) ne ""} {
@@ -126,7 +127,7 @@ define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
   ${RTL_ROOT}/multihead_attention.v \
-  ${RTL_ROOT}/multihead_attention_registered.v \
+  ${WRAPPER_ROOT}/multihead_attention_wrapper.v \
 ]
 
 # RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.

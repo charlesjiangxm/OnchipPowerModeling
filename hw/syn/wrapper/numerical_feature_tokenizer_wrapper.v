@@ -1,5 +1,5 @@
 // =====================================================================
-// numerical_feature_tokenizer_registered.v                   (Verilog-2005)
+// numerical_feature_tokenizer_wrapper.v                      (Verilog-2005)
 //
 // Synthesis wrapper for numerical_feature_tokenizer.  The wrapper preserves
 // the DUT interface while adding input and output registers so Design Compiler
@@ -7,7 +7,7 @@
 // =====================================================================
 
 `default_nettype none
-module numerical_feature_tokenizer_registered #(
+module numerical_feature_tokenizer_wrapper #(
     parameter N_FEATURE  = 20,
     parameter D_TOKEN    = 32,
     parameter DATA_WIDTH = 8,
