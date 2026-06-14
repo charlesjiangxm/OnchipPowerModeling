@@ -21,7 +21,7 @@ GCC      ?= gcc
 
 # repo root (this Makefile lives in hw/verif/)
 PROJ     := $(abspath ../..)
-MODELDIR := $(PROJ)/src/models
+MODELDIR := $(PROJ)/hw/model
 
 TB_DIR    := tb
 FLIST_DIR := flist
