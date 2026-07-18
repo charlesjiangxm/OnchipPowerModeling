@@ -1,0 +1,119 @@
+Information: Propagating switching activity (low effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort low
+Design : mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+Version: X-2025.06-SP2
+Date   : Sun Jun 14 23:46:23 2026
+****************************************
+
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp30p140lvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140lvt/tcbn28hpcplusbwp30p140lvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140lvt_180a/tcbn28hpcplusbwp30p140lvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp40p140ehvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp40p140ehvt/tcbn28hpcplusbwp40p140ehvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp40p140ehvt_170a/tcbn28hpcplusbwp40p140ehvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140tt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140/tcbn28hpcplusbwp30p140_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140_180a/tcbn28hpcplusbwp30p140tt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140hvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140hvt/tcbn28hpcplusbwp30p140hvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140hvt_180a/tcbn28hpcplusbwp30p140hvttt1v25c_ccs.db)
+
+
+Operating Conditions: tt1v25c   Library: tcbn28hpcplusbwp30p140tt1v25c_ccs
+Wire Load Model Mode: segmented
+
+Design        Wire Load Model            Library
+------------------------------------------------
+mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+mlp_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+dyn_quant_M16_ACC_W15_DATA_WIDTH8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+dyn_quant_M16_ACC_W22_DATA_WIDTH8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+dyn_quant_M1_ACC_W22_DATA_WIDTH8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_15 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_16 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_0 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_1 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_2 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_3 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_4 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_5 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_6 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_7 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_9 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_10 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_11 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_12 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_13 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_14 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W22_DATA_WIDTH8_SHW5_15 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_0 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_1 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_2 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_3 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_4 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_5 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_6 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_7 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_8 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_9 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_10 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_11 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_12 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_13 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+requant_rne_ACC_W15_DATA_WIDTH8_SHW4_14 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+
+
+Global Operating Voltage = 1    
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1nW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8    0.865   33.400 4.94e+05   34.760 100.0
+  U_DUT (mlp_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8)    0.855   33.153 4.94e+05   34.502  99.3
+    U_REQ3 (dyn_quant_M1_ACC_W22_DATA_WIDTH8) 1.72e-03 3.02e-03 6.57e+03 1.13e-02   0.0
+      G_LANE_0__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_0) 1.24e-03 2.32e-03 4.35e+03 7.91e-03   0.0
+    U_REQ2 (dyn_quant_M16_ACC_W22_DATA_WIDTH8) 6.01e-02 6.37e-02 2.81e+04    0.152   0.4
+      G_LANE_15__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_1) 3.37e-03 3.57e-03 1.86e+03 8.81e-03   0.0
+      G_LANE_14__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_2) 4.30e-03 4.94e-03 2.70e+03 1.19e-02   0.0
+      G_LANE_13__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_3) 3.47e-03 3.68e-03 1.13e+03 8.29e-03   0.0
+      G_LANE_12__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_4) 3.92e-03 4.38e-03  841.491 9.14e-03   0.0
+      G_LANE_11__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_5) 4.22e-03 4.77e-03 1.28e+03 1.03e-02   0.0
+      G_LANE_10__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_6) 3.25e-03 3.24e-03 1.02e+03 7.51e-03   0.0
+      G_LANE_9__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_7) 4.41e-03 5.20e-03 1.93e+03 1.16e-02   0.0
+      G_LANE_8__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_8) 3.60e-03 3.81e-03 1.53e+03 8.94e-03   0.0
+      G_LANE_7__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_9) 3.16e-03 2.98e-03 1.53e+03 7.66e-03   0.0
+      G_LANE_6__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_10) 2.92e-03 3.07e-03 2.48e+03 8.47e-03   0.0
+      G_LANE_5__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_11) 3.26e-03 3.19e-03 1.55e+03 7.99e-03   0.0
+      G_LANE_4__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_12) 3.55e-03 3.69e-03 1.00e+03 8.24e-03   0.0
+      G_LANE_3__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_13) 4.07e-03 4.69e-03 2.58e+03 1.13e-02   0.0
+      G_LANE_2__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_14) 3.12e-03 3.24e-03  963.667 7.32e-03   0.0
+      G_LANE_1__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_15) 3.11e-03 3.01e-03  988.376 7.10e-03   0.0
+      G_LANE_0__U_RQ (requant_rne_ACC_W22_DATA_WIDTH8_SHW5_16) 3.74e-03 4.25e-03 2.36e+03 1.04e-02   0.0
+    U_REQ1 (dyn_quant_M16_ACC_W15_DATA_WIDTH8) 3.01e-02 3.68e-02 2.98e+03 6.99e-02   0.2
+      G_LANE_15__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_0) 1.70e-03 2.13e-03   78.917 3.91e-03   0.0
+      G_LANE_14__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_1) 1.77e-03 2.19e-03   41.707 4.01e-03   0.0
+      G_LANE_13__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_2) 2.02e-03 2.68e-03  121.339 4.82e-03   0.0
+      G_LANE_12__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_3) 1.75e-03 2.13e-03  199.745 4.08e-03   0.0
+      G_LANE_11__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_4) 1.69e-03 2.11e-03  206.289 4.00e-03   0.0
+      G_LANE_10__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_5) 1.39e-03 1.55e-03   76.914 3.02e-03   0.0
+      G_LANE_9__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_6) 1.44e-03 1.73e-03  120.953 3.29e-03   0.0
+      G_LANE_8__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_7) 1.98e-03 2.44e-03  200.055 4.62e-03   0.0
+      G_LANE_7__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_8) 2.19e-03 2.70e-03  185.934 5.08e-03   0.0
+      G_LANE_6__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_9) 2.07e-03 2.70e-03   44.410 4.82e-03   0.0
+      G_LANE_5__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_10) 2.28e-03 2.93e-03  258.807 5.46e-03   0.0
+      G_LANE_4__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_11) 1.99e-03 2.54e-03  124.112 4.66e-03   0.0
+      G_LANE_3__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_12) 1.31e-03 1.56e-03  272.481 3.15e-03   0.0
+      G_LANE_2__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_13) 1.74e-03 2.22e-03  273.578 4.23e-03   0.0
+      G_LANE_1__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_14) 1.83e-03 2.42e-03  269.865 4.52e-03   0.0
+      G_LANE_0__U_RQ (requant_rne_ACC_W15_DATA_WIDTH8_SHW4_15) 1.79e-03 2.10e-03   43.585 3.93e-03   0.0
+1

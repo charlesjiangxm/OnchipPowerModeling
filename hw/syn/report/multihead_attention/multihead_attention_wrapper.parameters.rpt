@@ -1,0 +1,15 @@
+TOP_MODULE_NAME  multihead_attention_wrapper
+D_TOKEN          32
+N_HEADS          8
+SEQ_LEN          16
+DATA_WIDTH       8
+FRAC_BITS        7
+SCALE_FRAC       14
+SM_FRAC          8
+RECIP_FRAC       24
+SCALE            8192
+CLOCK_PERIOD     1.0
+INPUT_DELAY      0.2
+OUTPUT_DELAY     0.2
+CLOCK_UNCERTAINTY 0.05
+OUTPUT_LOAD      0.01

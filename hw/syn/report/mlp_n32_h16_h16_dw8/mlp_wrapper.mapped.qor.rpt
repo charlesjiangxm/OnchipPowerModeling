@@ -1,0 +1,109 @@
+ 
+****************************************
+Report : qor
+Design : mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+Version: X-2025.06-SP2
+Date   : Sun Jun 14 23:46:18 2026
+****************************************
+
+
+  Timing Path Group 'REGIN'
+  -----------------------------------
+  Levels of Logic:               0.00
+  Critical Path Length:          0.00
+  Critical Path Slack:           0.71
+  Critical Path Clk Period:      1.00
+  Total Negative Slack:          0.00
+  No. of Violating Paths:        0.00
+  Worst Hold Violation:          0.00
+  Total Hold Violation:          0.00
+  No. of Hold Violations:        0.00
+  -----------------------------------
+
+  Timing Path Group 'REGOUT'
+  -----------------------------------
+  Levels of Logic:               0.00
+  Critical Path Length:          0.13
+  Critical Path Slack:           0.62
+  Critical Path Clk Period:      1.00
+  Total Negative Slack:          0.00
+  No. of Violating Paths:        0.00
+  Worst Hold Violation:          0.00
+  Total Hold Violation:          0.00
+  No. of Hold Violations:        0.00
+  -----------------------------------
+
+  Timing Path Group 'clk'
+  -----------------------------------
+  Levels of Logic:              23.00
+  Critical Path Length:          0.94
+  Critical Path Slack:           0.00
+  Critical Path Clk Period:      1.00
+  Total Negative Slack:          0.00
+  No. of Violating Paths:        0.00
+  Worst Hold Violation:         -0.04
+  Total Hold Violation:         -0.29
+  No. of Hold Violations:        7.00
+  -----------------------------------
+
+
+  Cell Count
+  -----------------------------------
+  Hierarchical Cell Count:         37
+  Hierarchical Port Count:       1989
+  Leaf Cell Count:              62958
+  Buf/Inv Cell Count:            3189
+  Buf Cell Count:                 329
+  Inv Cell Count:                2860
+  CT Buf/Inv Cell Count:            0
+  Combinational Cell Count:     55548
+  Sequential Cell Count:         7410
+  Macro Count:                      0
+  -----------------------------------
+
+
+  Area
+  -----------------------------------
+  Combinational Area:    56994.587660
+  Noncombinational Area: 19726.056466
+  Buf/Inv Area:            887.670006
+  Total Buffer Area:           133.56
+  Total Inverter Area:         754.11
+  Macro/Black Box Area:      0.000000
+  Net Area:                  0.000000
+  -----------------------------------
+  Cell Area:             76720.644125
+  Design Area:           76720.644125
+
+
+  Design Rules
+  -----------------------------------
+  Total Number of Nets:         79646
+  Nets With Violations:             0
+  Max Trans Violations:             0
+  Max Cap Violations:               0
+  -----------------------------------
+
+
+  Hostname: ecelvd811.ece.local
+
+  Compile CPU Statistics
+  -----------------------------------------
+  Resource Sharing:                   29.90
+  Logic Optimization:                195.54
+  Mapping Optimization:              145.41
+  -----------------------------------------
+  Overall Compile Time:              823.78
+  Overall Compile Wall Clock Time:   831.02
+
+  --------------------------------------------------------------------
+
+  Design  WNS: 0.00  TNS: 0.00  Number of Violating Paths: 0
+
+
+  Design (Hold)  WNS: 0.04  TNS: 0.29  Number of Violating Paths: 7
+
+  --------------------------------------------------------------------
+
+
+1

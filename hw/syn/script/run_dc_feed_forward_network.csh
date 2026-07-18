@@ -147,4 +147,4 @@ set tcl_script = "${script_dir}/dc_feed_forward_network.tcl"
 set log_file   = "dc_feed_forward_network.log"
 
 echo "Running DC synthesis with ${tcl_script}, log saved to ${syn_dir}/${log_file}"
-dc_shell -f ${tcl_script} |& tee -i ${log_file}
+dc_shell -64bit -f ${tcl_script} |& tee -i ${log_file}

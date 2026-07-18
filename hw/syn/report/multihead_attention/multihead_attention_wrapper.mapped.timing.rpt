@@ -1,0 +1,195 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -nets
+        -max_paths 1
+        -transition_time
+Design : multihead_attention_wrapper_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192
+Version: X-2025.06-SP2
+Date   : Tue Jun 16 02:27:12 2026
+****************************************
+
+ # A fanout number of 1000 was used for high fanout net computations.
+
+Operating Conditions: tt1v25c   Library: tcbn28hpcplusbwp30p140tt1v25c_ccs
+Wire Load Model Mode: segmented
+
+  Startpoint: i_valid (input port clocked by clk)
+  Endpoint: valid_ff_reg
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: REGIN
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  multihead_attention_wrapper_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes
+  -------------------------------------------------------------------------------------------
+  clock clk (rise edge)                               0.00       0.00
+  clock network delay (ideal)                         0.00       0.00
+  input external delay                                0.20       0.20 r
+  i_valid (in)                              0.00      0.00       0.20 r
+  i_valid (net)                   1                   0.00       0.20 r
+  valid_ff_reg/next_state (**SEQGEN**)      0.00      0.00       0.20 r
+  data arrival time                                              0.20
+
+  clock clk (rise edge)                               1.00       1.00
+  clock network delay (ideal)                         0.00       1.00
+  clock uncertainty                                  -0.05       0.95
+  valid_ff_reg/clocked_on (**SEQGEN**)                0.00       0.95 r
+  library setup time                                  0.00       0.95
+  data required time                                             0.95
+  -------------------------------------------------------------------------------------------
+  data required time                                             0.95
+  data arrival time                                             -0.20
+  -------------------------------------------------------------------------------------------
+  slack (MET)                                                    0.75
+
+
+  Startpoint: o_valid_ff_reg
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: o_valid (output port clocked by clk)
+  Path Group: REGOUT
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  multihead_attention_wrapper_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  multihead_attention_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                           Fanout     Trans      Incr       Path      Attributes
+  ---------------------------------------------------------------------------------------------
+  clock clk (rise edge)                                 0.00       0.00
+  clock network delay (ideal)                           0.00       0.00
+  o_valid_ff_reg/clocked_on (**SEQGEN**)      0.00      0.00 #     0.00 r
+  o_valid_ff_reg/Q (**SEQGEN**)               0.00      0.00       0.00 r
+  o_valid (net)                     1                   0.00       0.00 r
+  o_valid (out)                               0.00      0.00       0.00 r
+  data arrival time                                                0.00
+
+  clock clk (rise edge)                                 1.00       1.00
+  clock network delay (ideal)                           0.00       1.00
+  clock uncertainty                                    -0.05       0.95
+  output external delay                                -0.20       0.75
+  data required time                                               0.75
+  ---------------------------------------------------------------------------------------------
+  data required time                                               0.75
+  data arrival time                                                0.00
+  ---------------------------------------------------------------------------------------------
+  slack (MET)                                                      0.75
+
+
+  Startpoint: U_DUT/ipb_mem_reg_32__0_
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: U_DUT/Kr_ff_reg_0__0__0_
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  multihead_attention_wrapper_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  multihead_attention_D_TOKEN32_N_HEADS8_SEQ_LEN16_DATA_WIDTH8_FRAC_BITS7_SCALE_FRAC14_SM_FRAC8_RECIP_FRAC24_SCALE8192 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  DW01_add_width23   ZeroWireload          tcbn28hpcplusbwp30p140tt1v25c_ccs
+  *ADD_TC_OP_23_23_23 ZeroWireload         tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_2046 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1950 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1854 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1758 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1662 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1566 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1470 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1374 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1278 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1182 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_1086 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_990 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_894 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_798 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_702 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  align_bias_IN_W8_OUT_W23_SH7_606 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  *ADD_TC_OP_23_8_23 ZeroWireload          tcbn28hpcplusbwp30p140tt1v25c_ccs
+  requant_ACC_W23_DATA_WIDTH8_SHIFT7_2046 ZeroWireload tcbn28hpcplusbwp30p140tt1v25c_ccs
+  DW01_cmp2_width23  ZeroWireload          tcbn28hpcplusbwp30p140tt1v25c_ccs
+  *LT_TC_OP_23_8_1   ZeroWireload          tcbn28hpcplusbwp30p140tt1v25c_ccs
+  *GT_TC_OP_23_8_1   ZeroWireload          tcbn28hpcplusbwp30p140tt1v25c_ccs
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                        Fanout     Trans      Incr       Path      Attributes
+  ------------------------------------------------------------------------------------------------------------------------------------------
+  clock clk (rise edge)                                                                              0.00       0.00
+  clock network delay (ideal)                                                                        0.00       0.00
+  U_DUT/ipb_mem_reg_32__0_/clocked_on (**SEQGEN**)                                         0.00      0.00 #     0.00 r
+  U_DUT/ipb_mem_reg_32__0_/Q (**SEQGEN**)                                                  0.00      0.00       0.00 r
+  U_DUT/ipb_mem[256] (net)                                                      16                   0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_ALIGN_BK/i_b[0] (align_bias_IN_W8_OUT_W23_SH7_2046)                      0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_ALIGN_BK/i_b[0] (net)                                                    0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_ALIGN_BK/o_aligned[7] (align_bias_IN_W8_OUT_W23_SH7_2046)                0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__bk_al[7] (net)                                                             0.00       0.00 r
+  U_DUT/add_165/B_7 (*ADD_TC_OP_23_23_23)                                                            0.00       0.00 r
+  U_DUT/add_165/net13783642 (net)                                                                    0.00       0.00 r
+  U_DUT/add_165/*cell*853114/B[7] (DW01_add_width23)                                                 0.00       0.00 r
+  U_DUT/add_165/*cell*853114/B[7] (net)                                                              0.00       0.00 r
+  ...
+  U_DUT/add_165/*cell*853114/SUM[7] (DW01_add_width23)                                               0.00       0.00 r
+  U_DUT/add_165/net13783665 (net)                                                                    0.00       0.00 r
+  U_DUT/add_165/Z_7 (*ADD_TC_OP_23_23_23)                                                            0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__ack[7] (net)                                                               0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/i_acc[7] (requant_ACC_W23_DATA_WIDTH8_SHIFT7_2046)                 0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/i_acc[7] (net)                                                     0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/A_7 (*ADD_TC_OP_23_8_23)                                    0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/net25445013 (net)                                           0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/*cell*1548082/A[7] (DW01_add_width23)                       0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/*cell*1548082/A[7] (net)                                    0.00       0.00 r
+  ...
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/*cell*1548082/SUM[7] (DW01_add_width23)                     0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/net25445038 (net)                                           0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/add_38/Z_7 (*ADD_TC_OP_23_8_23)                                    0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/sum[7] (net)                                                       0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/C40/Z_0 (*SELECT_OP_3.8_3.1_8)                           0.00      0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/o_q[0] (net)                                   1                   0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__U_REQ_K/o_q[0] (requant_ACC_W23_DATA_WIDTH8_SHIFT7_2046)                   0.00       0.00 r
+  U_DUT/G_B_S_0__G_B_E_0__k_c[0] (net)                                                               0.00       0.00 r
+  U_DUT/Kr_ff_reg_0__0__0_/next_state (**SEQGEN**)                                         0.00      0.00       0.00 r
+  data arrival time                                                                                             0.00
+
+  clock clk (rise edge)                                                                              1.00       1.00
+  clock network delay (ideal)                                                                        0.00       1.00
+  clock uncertainty                                                                                 -0.05       0.95
+  U_DUT/Kr_ff_reg_0__0__0_/clocked_on (**SEQGEN**)                                                   0.00       0.95 r
+  library setup time                                                                                 0.00       0.95
+  data required time                                                                                            0.95
+  ------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                            0.95
+  data arrival time                                                                                             0.00
+  ------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                   0.95
+
+
+1

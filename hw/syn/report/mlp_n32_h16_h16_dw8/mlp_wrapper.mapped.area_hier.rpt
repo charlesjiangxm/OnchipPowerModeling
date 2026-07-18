@@ -1,0 +1,83 @@
+ 
+****************************************
+Report : area
+Design : mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+Version: X-2025.06-SP2
+Date   : Sun Jun 14 23:46:18 2026
+****************************************
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp30p140lvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140lvt/tcbn28hpcplusbwp30p140lvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140lvt_180a/tcbn28hpcplusbwp30p140lvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp40p140ehvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp40p140ehvt/tcbn28hpcplusbwp40p140ehvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp40p140ehvt_170a/tcbn28hpcplusbwp40p140ehvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140tt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140/tcbn28hpcplusbwp30p140_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140_180a/tcbn28hpcplusbwp30p140tt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140hvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140hvt/tcbn28hpcplusbwp30p140hvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140hvt_180a/tcbn28hpcplusbwp30p140hvttt1v25c_ccs.db)
+
+Number of ports:                         2059
+Number of nets:                         81168
+Number of cells:                        62995
+Number of combinational cells:          55548
+Number of sequential cells:              7410
+Number of macros/black boxes:               0
+Number of buf/inv:                       3189
+Number of references:                       6
+
+Combinational area:              56994.587660
+Buf/Inv area:                      887.670006
+Noncombinational area:           19726.056466
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (Wire load has zero net area)
+
+Total cell area:                 76720.644125
+Total area:                 undefined
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ------------------------------ 
+Hierarchical cell                 Absolute    Percent  Combi-      Noncombi-   Black-
+                                  Total       Total    national    national    boxes   Design
+--------------------------------  ----------  -------  ----------  ----------  ------  ------------------------------------------------
+mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8 76720.6441   100.0     0.5040   127.7640 0.0000 mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+U_DUT                             76592.3761     99.8  51528.2037  19598.2925  0.0000  mlp_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+U_DUT/U_REQ1                       1596.6720      2.1     39.6900      0.0000  0.0000  dyn_quant_M16_ACC_W15_DATA_WIDTH8
+U_DUT/U_REQ1/G_LANE_0__U_RQ          94.6260      0.1     94.6260      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_15
+U_DUT/U_REQ1/G_LANE_10__U_RQ         92.7360      0.1     92.7360      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_5
+U_DUT/U_REQ1/G_LANE_11__U_RQ         92.1060      0.1     92.1060      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_4
+U_DUT/U_REQ1/G_LANE_12__U_RQ        105.8400      0.1    105.8400      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_3
+U_DUT/U_REQ1/G_LANE_13__U_RQ         88.5780      0.1     88.5780      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_2
+U_DUT/U_REQ1/G_LANE_14__U_RQ         94.3740      0.1     94.3740      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_1
+U_DUT/U_REQ1/G_LANE_15__U_RQ         88.8300      0.1     88.8300      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_0
+U_DUT/U_REQ1/G_LANE_1__U_RQ         105.5880      0.1    105.5880      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_14
+U_DUT/U_REQ1/G_LANE_2__U_RQ         105.5880      0.1    105.5880      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_13
+U_DUT/U_REQ1/G_LANE_3__U_RQ         105.5880      0.1    105.5880      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_12
+U_DUT/U_REQ1/G_LANE_4__U_RQ          92.1060      0.1     92.1060      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_11
+U_DUT/U_REQ1/G_LANE_5__U_RQ          94.3740      0.1     94.3740      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_10
+U_DUT/U_REQ1/G_LANE_6__U_RQ          92.7360      0.1     92.7360      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_9
+U_DUT/U_REQ1/G_LANE_7__U_RQ         105.8400      0.1    105.8400      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_8
+U_DUT/U_REQ1/G_LANE_8__U_RQ         105.9660      0.1    105.9660      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_7
+U_DUT/U_REQ1/G_LANE_9__U_RQ          92.1060      0.1     92.1060      0.0000  0.0000  requant_rne_ACC_W15_DATA_WIDTH8_SHW4_6
+U_DUT/U_REQ2                       3563.9100      4.6     80.3880      0.0000  0.0000  dyn_quant_M16_ACC_W22_DATA_WIDTH8
+U_DUT/U_REQ2/G_LANE_0__U_RQ         220.8780      0.3    220.8780      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_16
+U_DUT/U_REQ2/G_LANE_10__U_RQ        215.9640      0.3    215.9640      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_6
+U_DUT/U_REQ2/G_LANE_11__U_RQ        216.0900      0.3    216.0900      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_5
+U_DUT/U_REQ2/G_LANE_12__U_RQ        215.4600      0.3    215.4600      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_4
+U_DUT/U_REQ2/G_LANE_13__U_RQ        215.4600      0.3    215.4600      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_3
+U_DUT/U_REQ2/G_LANE_14__U_RQ        220.8780      0.3    220.8780      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_2
+U_DUT/U_REQ2/G_LANE_15__U_RQ        216.5940      0.3    216.5940      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_1
+U_DUT/U_REQ2/G_LANE_1__U_RQ         216.0900      0.3    216.0900      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_15
+U_DUT/U_REQ2/G_LANE_2__U_RQ         215.3340      0.3    215.3340      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_14
+U_DUT/U_REQ2/G_LANE_3__U_RQ         220.8780      0.3    220.8780      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_13
+U_DUT/U_REQ2/G_LANE_4__U_RQ         218.8620      0.3    218.8620      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_12
+U_DUT/U_REQ2/G_LANE_5__U_RQ         219.2400      0.3    219.2400      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_11
+U_DUT/U_REQ2/G_LANE_6__U_RQ         219.4920      0.3    219.4920      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_10
+U_DUT/U_REQ2/G_LANE_7__U_RQ         215.9640      0.3    215.9640      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_9
+U_DUT/U_REQ2/G_LANE_8__U_RQ         215.5860      0.3    215.5860      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_8
+U_DUT/U_REQ2/G_LANE_9__U_RQ         220.7520      0.3    220.7520      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_7
+U_DUT/U_REQ3                        305.2980      0.4     57.4560      0.0000  0.0000  dyn_quant_M1_ACC_W22_DATA_WIDTH8
+U_DUT/U_REQ3/G_LANE_0__U_RQ         247.8420      0.3    247.8420      0.0000  0.0000  requant_rne_ACC_W22_DATA_WIDTH8_SHW5_0
+--------------------------------  ----------  -------  ----------  ----------  ------  ------------------------------------------------
+Total                                                  56994.5877  19726.0565  0.0000
+
+1

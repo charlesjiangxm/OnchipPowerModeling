@@ -1,0 +1,33 @@
+ 
+****************************************
+Report : area
+Design : mlp_wrapper_N_FEATURES32_HIDDEN116_HIDDEN216_DATA_WIDTH8
+Version: X-2025.06-SP2
+Date   : Sun Jun 14 23:46:18 2026
+****************************************
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp30p140lvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140lvt/tcbn28hpcplusbwp30p140lvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140lvt_180a/tcbn28hpcplusbwp30p140lvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp40p140ehvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp40p140ehvt/tcbn28hpcplusbwp40p140ehvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp40p140ehvt_170a/tcbn28hpcplusbwp40p140ehvttt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140tt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140/tcbn28hpcplusbwp30p140_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140_180a/tcbn28hpcplusbwp30p140tt1v25c_ccs.db)
+    tcbn28hpcplusbwp30p140hvttt1v25c_ccs (File: /dfs/app/tsmc_icdc/tsmc028/28HPCplus_RF/SC/tcbn28hpcplusbwp30p140hvt/tcbn28hpcplusbwp30p140hvt_190a/Front_End/timing_power_noise/CCS/tcbn28hpcplusbwp30p140hvt_180a/tcbn28hpcplusbwp30p140hvttt1v25c_ccs.db)
+
+Number of ports:                         2059
+Number of nets:                         81168
+Number of cells:                        62995
+Number of combinational cells:          55548
+Number of sequential cells:              7410
+Number of macros/black boxes:               0
+Number of buf/inv:                       3189
+Number of references:                       6
+
+Combinational area:              56994.587660
+Buf/Inv area:                      887.670006
+Noncombinational area:           19726.056466
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (Wire load has zero net area)
+
+Total cell area:                 76720.644125
+Total area:                 undefined
+1

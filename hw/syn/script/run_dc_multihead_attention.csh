@@ -192,4 +192,4 @@ set tcl_script = "${script_dir}/dc_multihead_attention.tcl"
 set log_file   = "dc_multihead_attention.log"
 
 echo "Running DC synthesis with ${tcl_script}, log saved to ${syn_dir}/${log_file}"
-dc_shell -f ${tcl_script} |& tee -i ${log_file}
+dc_shell -64bit -f ${tcl_script} |& tee -i ${log_file}
