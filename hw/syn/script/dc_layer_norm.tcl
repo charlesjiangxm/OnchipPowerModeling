@@ -1,5 +1,5 @@
 ################################################################################
-# Design Compiler synthesis for layer_norm_registered (FT-Transformer LayerNorm).
+# Design Compiler synthesis for layer_norm_wrapper (FT-Transformer LayerNorm).
 #
 # Mirrors dc.tcl (the tokenizer flow) but targets the LayerNorm block. The RTL
 # uses SystemVerilog always_ff/always_comb, so it is analyzed as -format
@@ -17,7 +17,8 @@ set SYN_ROOT        [file normalize [file join ${SCRIPT_ROOT} ..]]
 set HW_ROOT         [file normalize [file join ${SYN_ROOT} ..]]
 set PROJ_ROOT       [file normalize [file join ${HW_ROOT} ..]]
 set RTL_ROOT        ${HW_ROOT}/rtl
-set TOP_MODULE_NAME layer_norm_registered
+set WRAPPER_ROOT    ${SYN_ROOT}/wrapper
+set TOP_MODULE_NAME layer_norm_wrapper
 
 proc get_env_or_default {name default_value} {
   if {[info exists ::env($name)] && $::env($name) ne ""} {
@@ -117,8 +118,11 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
+  ${RTL_ROOT}/requant.v \
+  ${RTL_ROOT}/align_bias.v \
+  ${RTL_ROOT}/isqrt.v \
   ${RTL_ROOT}/layer_norm.v \
-  ${RTL_ROOT}/layer_norm_registered.v \
+  ${WRAPPER_ROOT}/layer_norm_wrapper.v \
 ]
 
 # RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.

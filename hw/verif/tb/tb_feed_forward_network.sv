@@ -98,9 +98,9 @@ module tb_feed_forward_network;
         .D_TOKEN(DT), .D_FFN(DFFN), .DATA_WIDTH(DW), .FRAC_BITS(FRAC)
     ) dut (
         .clk(clk), .rst_n(rst_n),
-        .wr_en(wr_en), .wr_sel(wr_sel), .wr_addr(wr_addr), .wr_data(wr_data),
-        .in_valid(in_valid), .x_vec(x_vec),
-        .out_valid(out_valid), .y_vec(y_vec)
+        .i_wr_en(wr_en), .i_wr_sel(wr_sel), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
+        .i_valid(in_valid), .i_x_vec(x_vec),
+        .o_valid(out_valid), .o_y_vec(y_vec)
     );
 
     // ---- clock + free-running cycle counter --------------------------

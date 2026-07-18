@@ -1,13 +1,14 @@
 ################################################################################
-# Design Compiler synthesis for multihead_attention_wrapper
-# (FT-Transformer self-attention; nn.MultiheadAttention used as self.attn).
+# Design Compiler synthesis for mlp_wrapper
+# (3-layer MLP accelerator: gated fc1 -> dyn-quant -> fc2 -> dyn-quant -> fc3
+#  -> dyn-quant, int8, round-to-nearest-ties-to-even).
 #
-# Mirrors dc_layer_norm.tcl. The RTL uses SystemVerilog always_ff/always_comb,
-# so it is analyzed as -format sverilog. SCALE defaults to
-# round(2^SCALE_FRAC / sqrt(D_TOKEN/N_HEADS)) so it tracks the head dim; override
-# via the SCALE env var (and pass the SAME value to the C model / testbench).
+# Mirrors dc_feed_forward_network.tcl but targets the MLP block. The RTL uses
+# SystemVerilog always_ff/always_comb, so it is analyzed as -format sverilog.
+# There is no scalar constant to derive, so only
+# N_FEATURES/HIDDEN1/HIDDEN2/DATA_WIDTH are passed to elaborate.
 #
-# Run:  ./run_dc_multihead_attention.csh -mode syn [-batch_dir <dir>] [overrides]
+# Run:  ./run_dc_mlp.csh -mode syn [-batch_dir <dir>] [param overrides]
 ################################################################################
 
 ################################################################################
@@ -19,7 +20,7 @@ set HW_ROOT         [file normalize [file join ${SYN_ROOT} ..]]
 set PROJ_ROOT       [file normalize [file join ${HW_ROOT} ..]]
 set RTL_ROOT        ${HW_ROOT}/rtl
 set WRAPPER_ROOT    ${SYN_ROOT}/wrapper
-set TOP_MODULE_NAME multihead_attention_wrapper
+set TOP_MODULE_NAME mlp_wrapper
 
 proc get_env_or_default {name default_value} {
   if {[info exists ::env($name)] && $::env($name) ne ""} {
@@ -28,18 +29,10 @@ proc get_env_or_default {name default_value} {
   return $default_value
 }
 
-set D_TOKEN      [get_env_or_default D_TOKEN      32]
-set N_HEADS      [get_env_or_default N_HEADS      8]
-set SEQ_LEN      [get_env_or_default SEQ_LEN      16]
+set N_FEATURES   [get_env_or_default N_FEATURES   32]
+set HIDDEN1      [get_env_or_default HIDDEN1      16]
+set HIDDEN2      [get_env_or_default HIDDEN2      16]
 set DATA_WIDTH   [get_env_or_default DATA_WIDTH   8]
-set FRAC_BITS    [get_env_or_default FRAC_BITS    7]
-set SCALE_FRAC   [get_env_or_default SCALE_FRAC   14]
-set SM_FRAC      [get_env_or_default SM_FRAC      8]
-set RECIP_FRAC   [get_env_or_default RECIP_FRAC   24]
-# SCALE default = round(2^SCALE_FRAC / sqrt(D_TOKEN/N_HEADS)).
-set HD_VAL        [expr {$D_TOKEN / $N_HEADS}]
-set SCALE_DEFAULT [expr {int((1 << $SCALE_FRAC) / sqrt($HD_VAL) + 0.5)}]
-set SCALE        [get_env_or_default SCALE        ${SCALE_DEFAULT}]
 set CLOCK_PERIOD [get_env_or_default CLOCK_PERIOD 1.0]
 
 set INPUT_DELAY       [get_env_or_default INPUT_DELAY       [expr {$CLOCK_PERIOD * 0.20}]]
@@ -56,7 +49,7 @@ if {[info exists ::env(BATCH_DIR)] && $::env(BATCH_DIR) ne ""} {
   }
 } else {
   set date_hour [clock format [clock seconds] -format "%Y%m%d_%H"]
-  set BATCH_DIR [file join ${SYN_ROOT} "batch_multihead_attention_${date_hour}"]
+  set BATCH_DIR [file join ${SYN_ROOT} "batch_mlp_${date_hour}"]
 }
 
 file mkdir ${BATCH_DIR}
@@ -66,15 +59,10 @@ file mkdir ${BATCH_DIR}/results
 
 set param_rpt [open ${BATCH_DIR}/reports/${TOP_MODULE_NAME}.parameters.rpt w]
 puts $param_rpt "TOP_MODULE_NAME  ${TOP_MODULE_NAME}"
-puts $param_rpt "D_TOKEN          ${D_TOKEN}"
-puts $param_rpt "N_HEADS          ${N_HEADS}"
-puts $param_rpt "SEQ_LEN          ${SEQ_LEN}"
+puts $param_rpt "N_FEATURES       ${N_FEATURES}"
+puts $param_rpt "HIDDEN1          ${HIDDEN1}"
+puts $param_rpt "HIDDEN2          ${HIDDEN2}"
 puts $param_rpt "DATA_WIDTH       ${DATA_WIDTH}"
-puts $param_rpt "FRAC_BITS        ${FRAC_BITS}"
-puts $param_rpt "SCALE_FRAC       ${SCALE_FRAC}"
-puts $param_rpt "SM_FRAC          ${SM_FRAC}"
-puts $param_rpt "RECIP_FRAC       ${RECIP_FRAC}"
-puts $param_rpt "SCALE            ${SCALE}"
 puts $param_rpt "CLOCK_PERIOD     ${CLOCK_PERIOD}"
 puts $param_rpt "INPUT_DELAY      ${INPUT_DELAY}"
 puts $param_rpt "OUTPUT_DELAY     ${OUTPUT_DELAY}"
@@ -126,18 +114,16 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
-  ${RTL_ROOT}/requant.v \
-  ${RTL_ROOT}/align_bias.v \
-  ${RTL_ROOT}/exp_neg.v \
-  ${RTL_ROOT}/score_shift.v \
-  ${RTL_ROOT}/multihead_attention.v \
-  ${WRAPPER_ROOT}/multihead_attention_wrapper.v \
+  ${RTL_ROOT}/requant_rne.v \
+  ${RTL_ROOT}/dyn_quant.v \
+  ${RTL_ROOT}/mlp.v \
+  ${WRAPPER_ROOT}/mlp_wrapper.v \
 ]
 
 # RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.
 analyze -format sverilog $rtl_files
 
-set ELAB_PARAMS "D_TOKEN=${D_TOKEN},N_HEADS=${N_HEADS},SEQ_LEN=${SEQ_LEN},DATA_WIDTH=${DATA_WIDTH},FRAC_BITS=${FRAC_BITS},SCALE_FRAC=${SCALE_FRAC},SM_FRAC=${SM_FRAC},RECIP_FRAC=${RECIP_FRAC},SCALE=${SCALE}"
+set ELAB_PARAMS "N_FEATURES=${N_FEATURES},HIDDEN1=${HIDDEN1},HIDDEN2=${HIDDEN2},DATA_WIDTH=${DATA_WIDTH}"
 elaborate ${TOP_MODULE_NAME} -parameters ${ELAB_PARAMS}
 current_design ${TOP_MODULE_NAME}
 link

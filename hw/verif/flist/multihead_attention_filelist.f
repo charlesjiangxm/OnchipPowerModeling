@@ -2,5 +2,9 @@
 // The DPI glue (utils/multihead_attention_dpi.c) and the C model
 // (hw/model/multihead_attention_cmodel.c) are passed directly on the vcs
 // command line by the Makefile.
+../rtl/requant.v
+../rtl/align_bias.v
+../rtl/exp_neg.v
+../rtl/score_shift.v
 ../rtl/multihead_attention.v
 tb/tb_multihead_attention.sv

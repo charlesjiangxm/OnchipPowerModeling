@@ -6,7 +6,8 @@ set SYN_ROOT        [file normalize [file join ${SCRIPT_ROOT} ..]]
 set HW_ROOT         [file normalize [file join ${SYN_ROOT} ..]]
 set PROJ_ROOT       [file normalize [file join ${HW_ROOT} ..]]
 set RTL_ROOT        ${HW_ROOT}/rtl
-set TOP_MODULE_NAME numerical_feature_tokenizer_registered
+set WRAPPER_ROOT    ${SYN_ROOT}/wrapper
+set TOP_MODULE_NAME numerical_feature_tokenizer_wrapper
 
 proc get_env_or_default {name default_value} {
   if {[info exists ::env($name)] && $::env($name) ne ""} {
@@ -100,11 +101,14 @@ define_name_rules slash   -restricted  {/}  -replace  {_}
 define_design_lib WORK -path ${BATCH_DIR}/WORK
 
 set rtl_files [list \
+  ${RTL_ROOT}/requant.v \
+  ${RTL_ROOT}/align_bias.v \
   ${RTL_ROOT}/numerical_feature_tokenizer.v \
-  ${RTL_ROOT}/numerical_feature_tokenizer_registered.v \
+  ${WRAPPER_ROOT}/numerical_feature_tokenizer_wrapper.v \
 ]
 
-analyze -format verilog $rtl_files
+# RTL uses SystemVerilog always_ff/always_comb -> analyze as sverilog.
+analyze -format sverilog $rtl_files
 
 set ELAB_PARAMS "N_FEATURE=${N_FEATURE},D_TOKEN=${D_TOKEN},DATA_WIDTH=${DATA_WIDTH},FRAC_BITS=${FRAC_BITS}"
 elaborate ${TOP_MODULE_NAME} -parameters ${ELAB_PARAMS}

@@ -1,8 +1,8 @@
 #!/bin/tcsh -f
 
-# Run Synopsys Design Compiler synthesis for layer_norm_wrapper.
+# Run Synopsys Design Compiler synthesis for mlp_wrapper.
 # Usage:
-#   ./run_dc_layer_norm.csh -mode syn [-batch_dir <directory>] [parameter overrides]
+#   ./run_dc_mlp.csh -mode syn [-batch_dir <directory>] [parameter overrides]
 #
 # Optional overrides:
 #   -clock_period <ns>
@@ -10,12 +10,10 @@
 #   -output_delay <ns>
 #   -clock_uncertainty <ns>
 #   -output_load <cap>
-#   -d_token <count>
+#   -n_features <count>
+#   -hidden1 <count>
+#   -hidden2 <count>
 #   -data_width <bits>
-#   -frac_bits <bits>
-#   -recip_frac <bits>
-#   -out_frac <bits>
-#   -eps_v <int>            (defaults to round(1e-5*2^(2*frac)*d_token^2))
 
 if ( $#argv == 0 ) then
     echo "Error: No argument provided."
@@ -90,12 +88,28 @@ while ( $#argv > 0 )
             setenv OUTPUT_LOAD "$2"
             shift; shift
             breaksw
-        case "-d_token":
+        case "-n_features":
             if ( $#argv < 2 ) then
-                echo "Error: -d_token requires an argument"
+                echo "Error: -n_features requires an argument"
                 exit 1
             endif
-            setenv D_TOKEN "$2"
+            setenv N_FEATURES "$2"
+            shift; shift
+            breaksw
+        case "-hidden1":
+            if ( $#argv < 2 ) then
+                echo "Error: -hidden1 requires an argument"
+                exit 1
+            endif
+            setenv HIDDEN1 "$2"
+            shift; shift
+            breaksw
+        case "-hidden2":
+            if ( $#argv < 2 ) then
+                echo "Error: -hidden2 requires an argument"
+                exit 1
+            endif
+            setenv HIDDEN2 "$2"
             shift; shift
             breaksw
         case "-data_width":
@@ -104,38 +118,6 @@ while ( $#argv > 0 )
                 exit 1
             endif
             setenv DATA_WIDTH "$2"
-            shift; shift
-            breaksw
-        case "-frac_bits":
-            if ( $#argv < 2 ) then
-                echo "Error: -frac_bits requires an argument"
-                exit 1
-            endif
-            setenv FRAC_BITS "$2"
-            shift; shift
-            breaksw
-        case "-recip_frac":
-            if ( $#argv < 2 ) then
-                echo "Error: -recip_frac requires an argument"
-                exit 1
-            endif
-            setenv RECIP_FRAC "$2"
-            shift; shift
-            breaksw
-        case "-out_frac":
-            if ( $#argv < 2 ) then
-                echo "Error: -out_frac requires an argument"
-                exit 1
-            endif
-            setenv OUT_FRAC "$2"
-            shift; shift
-            breaksw
-        case "-eps_v":
-            if ( $#argv < 2 ) then
-                echo "Error: -eps_v requires an argument"
-                exit 1
-            endif
-            setenv EPS_V "$2"
             shift; shift
             breaksw
         default:
@@ -161,8 +143,8 @@ if ( "$batch_dir" != "" ) then
     setenv BATCH_DIR "$batch_dir"
 endif
 
-set tcl_script = "${script_dir}/dc_layer_norm.tcl"
-set log_file   = "dc_layer_norm.log"
+set tcl_script = "${script_dir}/dc_mlp.tcl"
+set log_file   = "dc_mlp.log"
 
 echo "Running DC synthesis with ${tcl_script}, log saved to ${syn_dir}/${log_file}"
 dc_shell -f ${tcl_script} |& tee -i ${log_file}

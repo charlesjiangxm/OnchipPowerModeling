@@ -29,7 +29,7 @@ UTILS_DIR := utils
 SIM_DIR   := sim
 
 TB ?= layer_norm
-VALID_TBS := layer_norm multihead_attention feed_forward_network numerical_feature_tokenizer
+VALID_TBS := layer_norm multihead_attention feed_forward_network numerical_feature_tokenizer mlp
 
 ifeq ($(filter $(TB),$(VALID_TBS)),)
 $(error Unsupported TB="$(TB)". Valid TB values: $(VALID_TBS))
@@ -67,6 +67,14 @@ CMODEL_DEFINE :=
 CMODEL_BIN   :=
 endif
 
+ifeq ($(TB),mlp)
+FLIST        := $(FLIST_DIR)/mlp_filelist.f
+DPI_C        := $(UTILS_DIR)/mlp_dpi.c
+CMODEL_C     := $(MODELDIR)/mlp_cmodel.c
+CMODEL_DEFINE := MLP_STANDALONE
+CMODEL_BIN   := $(SIM_DIR)/mlpcm
+endif
+
 SIMV      := $(SIM_DIR)/simv_$(TB)
 COMP_LOG  := $(SIM_DIR)/comp_$(TB).log
 RUN_LOG   := run_$(TB).log
@@ -91,7 +99,8 @@ VCS_CSOURCES := $(DPI_C) $(CMODEL_C)
         all_ln comp_ln run_ln verdi_ln cmodel_ln \
         all_mha comp_mha run_mha verdi_mha cmodel_mha \
         all_ffn comp_ffn run_ffn verdi_ffn cmodel_ffn \
-        all_nft comp_nft run_nft verdi_nft
+        all_nft comp_nft run_nft verdi_nft \
+        all_mlp comp_mlp run_mlp verdi_mlp cmodel_mlp
 
 all: comp run
 
@@ -174,7 +183,22 @@ run_nft:
 verdi_nft:
 	$(MAKE) TB=numerical_feature_tokenizer verdi
 
+all_mlp:
+	$(MAKE) TB=mlp all
+
+comp_mlp:
+	$(MAKE) TB=mlp comp
+
+run_mlp:
+	$(MAKE) TB=mlp run
+
+verdi_mlp:
+	$(MAKE) TB=mlp verdi
+
+cmodel_mlp:
+	$(MAKE) TB=mlp cmodel
+
 clean:
 	rm -rf "$(SIM_DIR)"/* \
 	       csrc simv simv_* simv*.daidir ucli.key vc_hdrs.h \
-	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm ffncm DVEfiles .inter.vpd.uvm
+	       *.log *.fsdb *.vpd novas.* verdiLog* lncm macm ffncm mlpcm DVEfiles .inter.vpd.uvm

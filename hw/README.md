@@ -385,3 +385,148 @@ Fully parallel to sustain II = 1 over whole `(S,E)` examples (defaults
 coefficient FFs** (`(4E²+4E)·DATA_WIDTH`). The in_proj/out_proj dominate. A folded
 variant (II > 1, reusing the lane datapath) is out of scope given the
 1-example-per-clock requirement.
+
+---
+
+# MLP — Verilog (int8 inference)
+
+Hardware implementation of the 3-layer feed-forward regressor `SmallMLP.forward`
+in [`src/models/mlp.py`](../src/models/mlp.py):
+
+```python
+h = relu(fc1(x)); h = relu(fc2(h)); y = fc3(h).squeeze(-1)
+#  fc1: Linear(n_features, hidden1)   fc2: Linear(hidden1, hidden2)
+#  fc3: Linear(hidden2, 1)            (dropout is identity at inference)
+```
+
+All three layers (`fc1 → fc2 → fc3`) are on-chip and **fully unrolled / pipelined**:
+one **1-bit** input vector `x` is consumed per clock and one signed int8 result is
+produced per clock after a fixed latency — **II = 1**, latency **7**. Latency is
+not a design constraint; each VMM and each requant gets its own pipeline stage.
+
+This block differs from the FFN block in three deliberate ways:
+
+1. **`x` is a 1-bit, unipolar `{0,1}` vector**, so `fc1` is a **gated adder tree**
+   (no multipliers): `h1[j] = b1[j] + Σ_i (x[i] ? W1[j][i] : 0)`.
+2. **Dynamic (block-floating-point) requant**, not a static `>>FRAC`. After each
+   VMM the full-precision result vector is requantized to int8 with **one shared,
+   data-dependent right-shift** `s = max(0, bitlen(max_i|v_i|) − (DATA_WIDTH−1))`,
+   then `q_i = sat8(v_i >> s)`. There is no fixed fractional scale — the datapath
+   is pure integer with a per-layer dynamic rescale (`dyn_quant.v`).
+3. Rounding is **round-to-nearest, ties-to-even** (`requant_rne.v`), and bias is
+   added **directly** to the accumulator (no `<<FRAC` alignment).
+
+`fc1`/`fc2` apply **ReLU to the full-precision accumulator** before the requant
+(so the shift is derived from the post-ReLU, non-negative vector); `fc3` has no
+activation and is requantized from the raw signed accumulator. The final int8 `o_y`
+is paired with `o_shift` (fc3's dynamic shift) so the host can recover the integer
+VMM3 magnitude: `acc3 ≈ o_y << o_shift`.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `rtl/mlp.v` | Synthesizable DUT (6-array FF coeff regfile → gated fc1 → req1 → fc2 → req2 → fc3 → req3, II=1 pipeline). Verilog-2005 dialect using `always_ff`/`always_comb` (no `logic`); compile with `vcs -sverilog`. |
+| `rtl/dyn_quant.v` | Per-vector dynamic (block-FP) int8 requantizer: abs + max-reduce + bit-length → shared shift, then `M` parallel `requant_rne` lanes. |
+| `rtl/requant_rne.v` | Per-element requantizer: dynamic-shift port, round-to-nearest-ties-to-even, saturate to int8 (dynamic-shift, RNE sibling of `requant.v`). |
+| `syn/wrapper/mlp_wrapper.v` | Synthesis wrapper adding input/output registers (flop-to-flop boundary for DC). |
+| `model/mlp_cmodel.{c,h}` | **Pure** behavioral C reference (no hardware/sim detail). The golden model — the RTL output (`y` and `shift`) equals it bit-for-bit. Has a `-DMLP_STANDALONE` self-test vs an independent `nearbyint`-RNE reference. |
+| `verif/utils/mlp_dpi.c` | Thin DPI-C glue exposing `mlp_cmodel` to SystemVerilog (the only file that includes `svdpi.h`). |
+| `verif/tb/tb_mlp.sv` | End-to-end self-checking SV testbench: random coefficients + random 1-bit inputs, scoreboard, **bit-exact** compare of `o_y` and `o_shift` vs the C model over DPI-C, II=1 check, FSDB dump. |
+| `verif/Makefile` (`*_mlp` targets), `verif/flist/mlp_filelist.f` | VCS-only compile/run/verdi flow. |
+| `syn/script/dc_mlp.tcl`, `syn/script/run_dc_mlp.csh` | Design Compiler scaffold (mirrors the FFN flow). |
+
+## Numeric model (int8, inference only)
+
+Pure integer. `x[i] ∈ {0,1}`; weights and biases are signed int8 (symmetric,
+zero-point 0). Accumulators are sized to never truncate (`+2` headroom):
+
+```
+fc1  a1[j] = relu( b1[j] + Σ_i ( x[i] ? W1[j][i] : 0 ) )     # ACC1_W = DW + clog2(NF) + 2
+req1 s1 = max(0, bitlen(max_j a1[j]) - (DW-1)); h1[j] = sat8( RNE(a1[j] >> s1) )
+fc2  a2[k] = relu( b2[k] + Σ_i h1[i]*W2[k][i] )              # ACC2_W = 2*DW + clog2(H1) + 2
+req2 s2 = max(0, bitlen(max_k a2[k]) - (DW-1)); h2[k] = sat8( RNE(a2[k] >> s2) )
+fc3  a3   =        b3[0] + Σ_i h2[i]*W3[i]                   # ACC3_W = 2*DW + clog2(H2) + 2
+req3 s3 = max(0, bitlen(|a3|) - (DW-1));        o_y  = sat8( RNE(a3 >> s3) );  o_shift = s3
+```
+
+`RNE` adds nothing when the shift is 0; otherwise it rounds the dropped bits to
+nearest, ties to even. The dequantized prediction is `(o_y << o_shift) ≈ acc3`;
+the absolute model scale (lost by the per-layer dynamic rescale) is the host's to
+track. Weights store row-major like PyTorch `Linear` `(out, in)`:
+`W1[j][i]@ j*NF+i`, `W2[k][i]@ k*H1+i`, `W3[i]@ i`.
+
+## Parameters
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `N_FEATURES` | 32 | fc1 in-dim = length of the 1-bit input vector |
+| `HIDDEN1`    | 16 | fc1 out-dim / fc2 in-dim |
+| `HIDDEN2`    | 16 | fc2 out-dim / fc3 in-dim |
+| `DATA_WIDTH` | 8  | int8 element width (weights, bias, output); requant targets `DATA_WIDTH-1` magnitude bits |
+
+## Ports
+
+| Dir | Name | Width | Notes |
+|-----|------|-------|-------|
+| in  | `clk`/`rst_n` | 1 | async assert / sync deassert; clears the valid pipeline |
+| in  | `i_wr_en`   | 1 | coefficient write strobe |
+| in  | `i_wr_sel`  | 3 | `0`=W1 `1`=b1 `2`=W2 `3`=b2 `4`=W3 `5`=b3 |
+| in  | `i_wr_addr` | `clog2(max array depth)` | linear index in the selected array |
+| in  | `i_wr_data` | `DATA_WIDTH` | signed int8 coefficient |
+| in  | `i_valid`   | 1 | a valid `i_x` is present this cycle |
+| in  | `i_x`       | `N_FEATURES` | 1-bit input vector: `x[i] = i_x[i]` |
+| out | `o_valid`   | 1 | high when `o_y`/`o_shift` are valid (7 cycles after `i_valid`) |
+| out | `o_y`       | `DATA_WIDTH` | signed int8 result (fc3, dynamic-quant) |
+| out | `o_shift`   | `clog2(ACC3_W+1)` | fc3 dynamic right-shift (so `acc3 ≈ o_y << o_shift`) |
+
+Coefficients load through the write-only port, one per clock; hold them static
+during inference: `i_wr_en=1, i_wr_sel=0..5, i_wr_addr=index, i_wr_data=int8`.
+
+## Verification
+
+**C-model self-test (runs anywhere, no simulator):**
+
+```
+cd hw/verif && make cmodel_mlp
+# PASS: integer model matches the independent reference bit-for-bit.
+```
+
+It cross-checks `mlp_int8()` against an independent reference that does the
+ties-to-even rounding with the FPU's native round-to-nearest-even mode
+(`nearbyint` under `FE_TONEAREST`); int8 products/sums are exact in double, so
+both `y` and the fc3 shift must agree bit-for-bit across several configs.
+
+**End-to-end RTL-vs-C-model over DPI-C (VCS + Verdi):**
+
+```
+cd hw/verif
+make all_mlp                                  # compile + run; expect:
+#   PASS: N vectors (NF=32, H1=16, H2=16) match C-model bit-for-bit (y + shift); II=1 over 64-beat burst.
+make verdi_mlp                                # open mlp.fsdb with full KDB hierarchy
+make all_mlp VCS_DEFINES=+define+MLP_H1=32+define+MLP_H2=24   # sweep dims (also MLP_NF)
+make run_mlp SIMARGS=+seed=12345              # pick a random seed
+```
+
+The TB loads random int8 coefficients through the write port, streams random
+1-bit input vectors, captures each output after the pipeline latency, calls the C
+model through DPI-C on the same inputs, and requires **both** `o_y` **and**
+`o_shift` to match exactly. `-kdb -debug_access+all` write the Verdi knowledge
+database under `simv_mlp.daidir/kdb`.
+
+**Synthesis (Design Compiler):**
+
+```
+cd hw/syn/script && ./run_dc_mlp.csh -mode syn -n_features 32 -hidden1 16 -hidden2 16
+# Outputs are written under hw/syn/batch_mlp_*.
+```
+
+## Resource note
+
+Fully parallel to sustain II = 1 (defaults `NF=32, H1=16, H2=16`): `fc1` is
+`H1·NF`=512 gated **adders** (no multipliers, since `x` is 1-bit), `fc2` is
+`H2·H1`=256 int8 multipliers, `fc3` is `H2`=16; plus three `dyn_quant` blocks
+(abs/max-reduce + bit-length + `M` shift lanes). Coefficient storage is
+`(H1·NF + H1 + H2·H1 + H2 + H2 + 1)·DATA_WIDTH` FFs (≈ 6.3 k bits at defaults),
+FF-based so all coefficients read in parallel. A folded variant (II > 1, reusing
+the lane datapath) is out of scope given the 1-vector-per-clock requirement.
