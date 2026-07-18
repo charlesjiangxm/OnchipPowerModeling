@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 """Submit unfinished YAML regression configs as node-scoped Slurm workers.
 
-The runner discovers configs under ``configs/`` and assigns them across
-user-configurable CPU/GPU workers. Each worker is one Slurm job on a single node
-and runs up to ``--jobs-per-node`` configs concurrently. ``--node-count`` must
-match the number of comma-separated entries in ``--node-partitions``.
+The runner recursively discovers configs under ``--config-path`` and assigns
+them across user-configurable CPU/GPU workers. Each worker is one Slurm job on a
+single node and runs up to ``--jobs-per-node`` configs concurrently.
+``--node-count`` must match the number of comma-separated entries in
+``--node-partitions``.
 
 Example - CPU only:
-python script/run_all.py --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
+python script/run_all.py --config-path configs/aq_core_lvl2 --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
 
 Example - CPU & GPU:
-python script/run_all.py --node-count 2 --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
+python script/run_all.py --config-path configs/aq_core_lvl2 --node-count 2 --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
 
 """
 
@@ -93,18 +94,18 @@ class SubmittedBatch:
 
 def main() -> int:
     args = parse_args()
-    configs_dir = resolve_repo_path(args.configs_dir)
+    config_path = resolve_repo_path(args.config_path)
     output_root = resolve_repo_path(args.output_root)
     python_exe = Path(sys.executable).resolve()
     scheduler_dir = output_root / "slurm_runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
 
     all_jobs = discover_configs(
-        configs_dir=configs_dir,
+        config_path=config_path,
         gpu_algorithms=args.gpu_algorithms,
         node_partitions=args.node_partitions,
     )
     if not all_jobs:
-        raise SystemExit(f"No YAML configs found under {configs_dir}")
+        raise SystemExit(f"No YAML configs found under {config_path}")
 
     pending_jobs, skipped_jobs = skip_finished_jobs(all_jobs, output_root)
     unfinished_count = len(pending_jobs)
@@ -118,6 +119,7 @@ def main() -> int:
         skipped_jobs=skipped_jobs,
         total_configs=len(all_jobs),
         unfinished_count=unfinished_count,
+        config_path=config_path,
         python_exe=python_exe,
         jobs_per_node=args.jobs_per_node,
         node_partitions=args.node_partitions,
@@ -173,10 +175,15 @@ def parse_args() -> argparse.Namespace:
         description="Submit unfinished YAML configs as node-scoped Slurm workers."
     )
     parser.add_argument(
+        "--config-path",
         "--configs-dir",
-        type=Path,
-        default=Path("configs"),
-        help="Directory containing YAML configs (default: configs).",
+        dest="config_path",
+        type=str,
+        default="configs",
+        help=(
+            "Directory containing YAML configs. Files are discovered recursively "
+            "(default: configs)."
+        ),
     )
     parser.add_argument(
         "--output-root",
@@ -283,23 +290,24 @@ def parse_gpu_algorithms(value: str) -> set[str]:
     return set(algorithms)
 
 
-def resolve_repo_path(path: Path) -> Path:
+def resolve_repo_path(path: str | Path) -> Path:
+    path = Path(path)
     return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
 
 
 def discover_configs(
     *,
-    configs_dir: Path,
+    config_path: Path,
     gpu_algorithms: set[str],
     node_partitions: tuple[str, ...],
 ) -> list[ConfigJob]:
-    if not configs_dir.is_dir():
-        raise FileNotFoundError(f"configs directory not found: {configs_dir}")
+    if not config_path.is_dir():
+        raise FileNotFoundError(f"config path not found or not a directory: {config_path}")
 
-    paths = sorted({*configs_dir.glob("*.yaml"), *configs_dir.glob("*.yml")})
+    paths = sorted({*config_path.rglob("*.yaml"), *config_path.rglob("*.yml")})
     jobs: list[ConfigJob] = []
-    for config_path in paths:
-        algorithm = read_algorithm(config_path)
+    for config_file in paths:
+        algorithm = read_algorithm(config_file)
         needs_gpu = route_to_gpu(
             algorithm=algorithm,
             gpu_algorithms=gpu_algorithms,
@@ -307,7 +315,7 @@ def discover_configs(
         )
         jobs.append(
             ConfigJob(
-                config=config_path,
+                config=config_file,
                 algorithm=algorithm,
                 partition=GPU_PARTITION if needs_gpu else CPU_PARTITION,
                 needs_gpu=needs_gpu,
@@ -477,6 +485,7 @@ def print_summary(
     skipped_jobs: list[SkippedJob],
     total_configs: int,
     unfinished_count: int,
+    config_path: Path,
     python_exe: Path,
     jobs_per_node: int,
     node_partitions: tuple[str, ...],
@@ -496,6 +505,7 @@ def print_summary(
         node_partitions=node_partitions,
     )
     print(f"repo root: {REPO_ROOT}")
+    print(f"config path: {config_path}")
     print(f"python: {python_exe}")
     print(
         f"configs: {total_configs} total; {len(skipped_jobs)} finished skipped; "
@@ -744,7 +754,7 @@ def write_manifest(
         "repo_root": str(REPO_ROOT),
         "scheduler_dir": str(scheduler_dir),
         "python": str(python_exe),
-        "configs_dir": str(resolve_repo_path(args.configs_dir)),
+        "config_path": str(resolve_repo_path(args.config_path)),
         "output_root": str(resolve_repo_path(args.output_root)),
         "time": args.time,
         "node_count": args.node_count,
