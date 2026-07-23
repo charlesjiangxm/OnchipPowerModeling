@@ -2,15 +2,19 @@
 
 Reads a YAML config, builds the train/val/test splits, runs preprocessing
 and feature selection, drives Optuna HPO, refits with the best params,
-emits artifacts, and writes report.md.
+emits artifacts, and writes a folder-named report.
 
 Outputs land under ``<repo_root>/output/<config_stem>_<timestamp>/``.
+After a successful run, only ``<run_dir.name>.md`` is retained in that folder.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import shutil
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +24,28 @@ from .config import Config, load_config
 from .feature_selectors import FeatureSelector
 from .models import MODEL_REGISTRY
 from .rulefit_utils import compute_metrics
+
+# #region agent log
+_DEBUG_LOG = Path(__file__).resolve().parents[1] / ".cursor" / "debug-b152a1.log"
+
+
+def _agent_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    payload = {
+        "sessionId": "b152a1",
+        "runId": "prune",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _DEBUG_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, default=str) + "\n")
+    except OSError:
+        pass
+# #endregion
 
 
 def run(config_path: str | Path, output_root: str | Path | None = None) -> int:
@@ -205,8 +231,8 @@ def run(config_path: str | Path, output_root: str | Path | None = None) -> int:
     if (hpo_dir / "param_importances.png").exists():
         figures["hpo_param_importances"] = "hpo/param_importances.png"
 
-    # 12. Report
-    report.write_report(
+    # 12. Report (folder-named); drop figure links — artifacts are pruned next.
+    report_path = report.write_report(
         cfg.run_dir,
         config_summary={
             "config_path": str(cfg.config_path),
@@ -218,10 +244,35 @@ def run(config_path: str | Path, output_root: str | Path | None = None) -> int:
         counts=counts,
         metrics=metrics,
         best_hp=best_hp,
-        figures=figures,
+        figures={},
         extras=extras,
     )
-    log.info("done: %s", cfg.run_dir / "report.md")
+    log.info("done: %s", report_path)
+    # #region agent log
+    before = sorted(p.name for p in cfg.run_dir.iterdir())
+    _agent_log(
+        "H3",
+        "pipeline.py:before_prune",
+        "run_dir contents before prune",
+        {"run_dir": str(cfg.run_dir), "report": report_path.name, "entries": before},
+    )
+    # #endregion
+    _close_file_handlers()
+    kept = _prune_run_dir(cfg.run_dir, keep=report_path)
+    # #region agent log
+    after = sorted(p.name for p in cfg.run_dir.iterdir())
+    _agent_log(
+        "H3",
+        "pipeline.py:after_prune",
+        "run_dir contents after prune",
+        {
+            "run_dir": str(cfg.run_dir),
+            "kept": str(kept),
+            "entries": after,
+            "fit_log_gone": "fit.log" not in after,
+        },
+    )
+    # #endregion
     return 0
 
 
@@ -248,6 +299,33 @@ def _setup_logging(run_dir: Path) -> logging.Logger:
     root.addHandler(stream_h)
     root.setLevel(logging.INFO)
     return logging.getLogger("pipeline")
+
+
+def _close_file_handlers() -> None:
+    """Close FileHandlers so fit.log can be deleted on prune (H3)."""
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        if isinstance(h, logging.FileHandler):
+            h.close()
+            root.removeHandler(h)
+
+
+def _prune_run_dir(run_dir: Path, *, keep: Path) -> Path:
+    """Delete everything in run_dir except ``keep`` (must be a direct child)."""
+    run_dir = Path(run_dir)
+    keep = Path(keep).resolve()
+    if keep.parent.resolve() != run_dir.resolve():
+        raise ValueError(f"keep path must be inside run_dir: {keep} vs {run_dir}")
+    for child in list(run_dir.iterdir()):
+        if child.resolve() == keep:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink(missing_ok=True)
+    if not keep.is_file():
+        raise FileNotFoundError(f"expected kept report missing after prune: {keep}")
+    return keep
 
 
 def _seed_everything(seed: int) -> None:

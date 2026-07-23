@@ -45,7 +45,7 @@ DEFAULT_NODE_PARTITIONS = (
     CPU_PARTITION,
 )
 DEFAULT_JOBS_PER_NODE = 1
-DONE_LOG_RE = re.compile(r"INFO\s+pipeline\s+::\s+done:\s+(.+?report\.md)\s*$")
+DONE_LOG_RE = re.compile(r"INFO\s+pipeline\s+::\s+done:\s+(.+?\.md)\s*$")
 
 
 @dataclass(frozen=True)
@@ -440,8 +440,19 @@ def find_finished_run(config_path: Path, output_root: Path) -> FinishedRun | Non
 
 
 def finished_report_from_log(run_dir: Path) -> Path | None:
+    """Return the kept report for a finished run, or None.
+
+    Finished runs retain only ``<run_dir.name>.md``. Legacy layouts with
+    ``fit.log`` + ``report.md`` are still recognized.
+    """
+    named = run_dir / f"{run_dir.name}.md"
+    if named.is_file():
+        return named
+
+    legacy = run_dir / "report.md"
     log_path = run_dir / "fit.log"
     if not log_path.is_file():
+        # Named report is the post-prune success marker (H2).
         return None
 
     done_report: str | None = None
@@ -461,9 +472,8 @@ def finished_report_from_log(run_dir: Path) -> Path | None:
         return report_path
 
     # Keep runs portable if output directories move after completion.
-    local_report = run_dir / "report.md"
-    if local_report.is_file() and report_path.name == "report.md":
-        return local_report
+    if legacy.is_file() and report_path.name in {"report.md", f"{run_dir.name}.md"}:
+        return legacy
     return None
 
 

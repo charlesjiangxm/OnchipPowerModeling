@@ -109,7 +109,8 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Scan output/*/report.md and plot train/val/test R2 and RMSE "
+            "Scan output/*/<run_dir>.md (or legacy report.md) and plot "
+            "train/val/test R2 and RMSE "
             "curves for each module/proxy-kind experiment."
         )
     )
@@ -177,7 +178,16 @@ def collect_records(
 ) -> tuple[list[RunRecord], list[str]]:
     records: list[RunRecord] = []
     skipped: list[str] = []
-    for report_path in sorted(output_root.glob("*/report.md")):
+    report_paths: list[Path] = []
+    for entry in sorted(p for p in output_root.iterdir() if p.is_dir()):
+        named = entry / f"{entry.name}.md"
+        legacy = entry / "report.md"
+        if named.is_file():
+            report_paths.append(named)
+        elif legacy.is_file():
+            report_paths.append(legacy)
+
+    for report_path in report_paths:
         try:
             record = parse_report(report_path)
         except ValueError as exc:

@@ -55,9 +55,13 @@ def collect(output_dir: Path) -> pd.DataFrame:
         if not m:
             skipped.append(f"{entry.name} (no timestamp suffix)")
             continue
-        report = entry / "report.md"
+        report = entry / f"{entry.name}.md"
         if not report.exists():
-            skipped.append(f"{entry.name} (no report.md)")
+            # Legacy layout before prune-to-report-only.
+            legacy = entry / "report.md"
+            report = legacy if legacy.exists() else report
+        if not report.exists():
+            skipped.append(f"{entry.name} (no report)")
             continue
         metrics = parse_report(report)
         if metrics is None:

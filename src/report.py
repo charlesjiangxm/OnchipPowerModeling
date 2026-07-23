@@ -1,14 +1,22 @@
-"""Write the per-run report.md.
+"""Write the per-run report markdown.
 
 Includes the resolved config (summary), the sample/feature counts at each
 pipeline stage, train/val/test metrics in original y units, the best HPO
-trial's hyperparameters, and links to every produced figure.
+trial's hyperparameters, and optional links to figures.
+
+The report is saved as ``<run_dir.name>.md`` (same basename as the run folder).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+
+
+def report_path_for(run_dir: Path) -> Path:
+    """Canonical report path: ``<run_dir>/<run_dir.name>.md``."""
+    run_dir = Path(run_dir)
+    return run_dir / f"{run_dir.name}.md"
 
 
 def write_report(
@@ -20,8 +28,8 @@ def write_report(
     best_hp: dict[str, Any],
     figures: dict[str, str],
     extras: dict[str, str] | None = None,
-) -> None:
-    """Render report.md inside run_dir.
+) -> Path:
+    """Render the run report inside run_dir; return the written path.
 
     ``figures`` maps a logical name (e.g. ``pred_vs_true_test``) to a path
     relative to ``run_dir`` (e.g. ``artifacts/pred_vs_true_test.png``).
@@ -93,4 +101,6 @@ def write_report(
             lines.append(body)
             lines.append("")
 
-    (run_dir / "report.md").write_text("\n".join(lines))
+    out = report_path_for(run_dir)
+    out.write_text("\n".join(lines))
+    return out
