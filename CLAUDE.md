@@ -24,11 +24,11 @@ On-chip power modeling for a RISC-V CPU ("aq_core", T-Head C906 family). Two hal
 
 ```bash
 # Run one experiment (--config is a flag, not positional)
-python script/run_fit.py --config configs/aq_core_lvl1/rtu/rtu_all_univariate_mlp.yaml [--output-root <dir>]
+python script/run_fit.py --config configs/aq_core/rtu/rtu_input_univariate_mlp.yaml [--output-root <dir>]
 
 # Sweep all unfinished configs under a path — Slurm only (sbatch, partitions cpu-share/gpu-share).
 # On macOS use --dry-run to preview. GPU routing is OFF by default; pass --gpu-algorithms explicitly.
-python script/run_all.py --config-path configs/aq_core_lvl2 --node-count 2 \
+python script/run_all.py --config-path configs/aq_core/lsu --node-count 2 \
     --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
 python script/run_all.py --config-path configs --dry-run
 
@@ -81,11 +81,11 @@ Key contracts:
 
 ## Config Naming Convention (load-bearing)
 
-`configs/aq_core_lvl{1,2}/<block>/<block>_<signal-group>_<selector>_<model>.yaml` — all 2880 files are mechanically generated variants of one template (seed 42, ratio [0.8,0.2,0.0], avg_wsize 128, hpo_timeout 300); edit them programmatically, not by hand.
+`configs/aq_core/<block>/[<sub-block>/]<block>_<signal-group>_<selector>_<model>.yaml` — mirrors `db/aq_core/` module hierarchy; files are mechanically generated variants of one template (seed 42, ratio [0.8,0.2,0.0], avg_wsize 128, hpo_timeout 300); edit them programmatically, not by hand.
 
-- lvl1 blocks (CPU top functional units): `cp0 idu ifu iu lsu rtu vidu vpu`, each with signal groups `all/input/internal/output`; lvl2 blocks (LSU + VIDU-FP sub-blocks, `aq_lsu_*`, `aq_vidu_*_fp`, `aq_dcache_top`) have only `input/internal`.
+- Top blocks (CPU functional units): `cp0 idu ifu iu lsu rtu vidu vpu`, each with signal groups `input/internal/output`. LSU/VIDU sub-blocks nest under their parent (`configs/aq_core/lsu/aq_lsu_*`, `aq_dcache_top`; `configs/aq_core/vidu/aq_vidu_*_fp`) and have only `input/internal`.
 - Selector and model slugs map 1:1 to config fields (`ft_transformer`→`FT-Transformer`, `elasticnet`→`ElasticNetCV`, …).
-- Slots themselves contain underscores (`aq_vidu_vid_dp_fp`, `from_model`) — parse stems against the closed vocabularies (as `plot_experiment_metrics.py` does; note its `KINDS` covers only `input/internal/output`, so lvl1 `*_all_*` stems are skipped), never with a naive `split('_')`.
+- Slots themselves contain underscores (`aq_vidu_vid_dp_fp`, `from_model`) — parse stems against the closed vocabularies (as `plot_experiment_metrics.py` does; note its `KINDS` covers only `input/internal/output`), never with a naive `split('_')`.
 - `run_all.py` and the plotting scripts key off these stems; keep them unique repo-wide.
 
 ## Hardware Architecture

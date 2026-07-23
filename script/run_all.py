@@ -8,10 +8,10 @@ single node and runs up to ``--jobs-per-node`` configs concurrently.
 ``--node-partitions``.
 
 Example - CPU only:
-python script/run_all.py --config-path configs/aq_core_lvl2 --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
+python script/run_all.py --config-path configs/aq_core/lsu --node-count 2 --node-partitions cpu-share,cpu-share --jobs-per-node 2
 
 Example - CPU & GPU:
-python script/run_all.py --config-path configs/aq_core_lvl2 --node-count 2 --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
+python script/run_all.py --config-path configs/aq_core/lsu --node-count 2 --node-partitions cpu-share,gpu-share --gpu-algorithms "MLP,FT-Transformer" --jobs-per-node 8
 
 """
 
