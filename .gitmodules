@@ -1,0 +1,4 @@
+[submodule "third_party/rulefit"]
+	path = third_party/rulefit
+	url = https://github.com/charlesjiangxm/rulefit.git
+	branch = master
