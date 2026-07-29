@@ -1,0 +1,7 @@
+# Beyond the anaconda base stack (pandas, numpy, scipy, scikit-learn,
+# matplotlib, pyyaml), the pipeline needs:
+xgboost>=2.0
+optuna>=3.5
+skglm>=0.3          # LR-MCP proxy selection (Stage 1)
+pyarrow             # labels.parquet
+pytest              # tests only
