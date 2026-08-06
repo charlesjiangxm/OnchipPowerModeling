@@ -259,7 +259,9 @@ class DatasetCache:
             rows = slice(start, start + take)
             mats.append(self.load_features(b, kept, rows=rows))
             ys.append(self.labels(b, rows=rows)[self.cfg.data.target].to_numpy(float))
-        X = sparse.vstack(mats, format="csc").astype(np.float64)
+        X = sparse.vstack(mats, format="csc")
+        del mats
+        X = X.astype(np.float64)
         y = np.concatenate(ys)
         log.info("selection matrix: %d x %d, nnz=%d", X.shape[0], X.shape[1], X.nnz)
         return X, y

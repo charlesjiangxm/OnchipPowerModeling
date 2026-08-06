@@ -150,6 +150,20 @@ def evaluation_report(
         report["multicycle"] = multicycle_metrics(
             y, yhat, bench_slices, cfg.eval.multicycle_windows, eps_frac
         )
+    per_bench: dict[str, dict] = {}
+    for bench_name, sl in bench_slices.items():
+        yb, yhatb = y[sl], yhat[sl]
+        if yb.size == 0:
+            continue
+        b_mape, b_n_masked = mape_percent(yb, yhatb, eps_frac)
+        per_bench[bench_name] = {
+            "n_cycles": int(yb.size),
+            "mape": b_mape,
+            "mape_masked_cycles": b_n_masked,
+            "r2": r2_score(yb, yhatb),
+            "apet_success": apet_success_rates(yb, yhatb, cfg.eval.apet, eps_frac),
+        }
+    report["per_benchmark"] = per_bench
     return report
 
 

@@ -11,19 +11,28 @@ from __future__ import annotations
 import numpy as np
 
 # Above this width, use the bytes/unpackbits path instead of uint64 shifts.
-_SHIFT_WIDTH_MAX = 64
+# 64-bit-wide nets use the bytes path: their mask values can reach 2^64-1,
+# which exceeds C long (signed 64-bit) and overflows np.fromiter(uint64).
+_SHIFT_WIDTH_MAX = 63
 
 
-def _coerce_masks(values: np.ndarray, nz_local: np.ndarray, context: str) -> list[int]:
+def _coerce_masks(
+    values: np.ndarray, nz_local: np.ndarray, context: str, width: int
+) -> list[int]:
     """Convert nonzero cells to ints, validating float-typed masks.
 
     The real DB stores some cells as floats (verified on wide data nets).
     Exact-integer floats are coerced; NaN or fractional values are corrupt
     and abort the build immediately with context. Floats >= 2**53 already
     lost low mantissa bits upstream - warn once, the DB is the culprit.
+
+    Values are masked to ``width`` bits: float64 rounding can push a max-width
+    bitmask (e.g. 2**64-1 for a 64-bit net) to 2**64, which overflows both
+    np.fromiter(uint64) and int.to_bytes.
     """
     out: list[int] = []
     warned = False
+    mask = (1 << width) - 1
     for i in nz_local:
         v = values[i]
         if isinstance(v, float):
@@ -37,7 +46,7 @@ def _coerce_masks(values: np.ndarray, nz_local: np.ndarray, context: str) -> lis
                     "been lost when the DB was dumped", context, v,
                 )
                 warned = True
-        out.append(int(v))
+        out.append(int(v) & mask)
     return out
 
 
@@ -59,14 +68,15 @@ def expand_net_column(
     nz_local = np.flatnonzero(values != 0)
     if nz_local.size == 0:
         return 0
-    masks = _coerce_masks(values, nz_local, context)
+    masks = _coerce_masks(values, nz_local, context, width)
 
     if width <= _SHIFT_WIDTH_MAX:
         a = np.fromiter(masks, dtype=np.uint64, count=nz_local.size)
         bits = (a[:, None] >> np.arange(width, dtype=np.uint64)) & np.uint64(1)
     else:
         nbytes = (width + 7) // 8
-        buf = b"".join(m.to_bytes(nbytes, "little") for m in masks)
+        bmask = (1 << (nbytes * 8)) - 1
+        buf = b"".join((m & bmask).to_bytes(nbytes, "little") for m in masks)
         packed = np.frombuffer(buf, dtype=np.uint8).reshape(nz_local.size, nbytes)
         bits = np.unpackbits(packed, axis=1, bitorder="little")[:, :width]
 

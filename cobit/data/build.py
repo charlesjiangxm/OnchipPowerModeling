@@ -179,34 +179,41 @@ def _build_benchmark(
         scope_dir = bdir / scope
         scope_dir.mkdir(exist_ok=True)
         nnz_scope = 0
-        # one to_numpy per net (not per net per chunk): this loop touches
-        # every cell of the DB and dominates full-build time
-        arrays = {net.column: df[net.column].to_numpy() for net in nets}
+        # Extract each column inline per chunk rather than pre-materializing an
+        # arrays dict: holding all columns as separate numpy arrays duplicates
+        # ~n_rows*n_cols*8 bytes of pointers (~30 GB for coremark/vpu), which
+        # alone can exceed node memory on large scopes.
         for cm in chunks_meta:
             pos = keep_pos[cm["start"]: cm["stop"]]
             rows_out: list[np.ndarray] = []
             cols_out: list[np.ndarray] = []
             for net in nets:
-                vals = arrays[net.column][pos]
+                vals = df[net.column].to_numpy()[pos]
                 expand_net_column(
                     vals, net.width, net.base_col - s_lo, 0, rows_out, cols_out,
                     context=f"{bench}/{scope}/{net.column}",
                 )
             n_local = len(pos)
             if rows_out:
+                # Free the per-net COO lists before building the CSR so the
+                # list-of-arrays and the concatenated arrays do not coexist
+                # (the dominant peak on wide scopes like vpu).
                 r = np.concatenate(rows_out)
+                del rows_out
                 c = np.concatenate(cols_out)
+                del cols_out
                 data = np.ones(r.size, dtype=np.uint8)
                 mat = sparse.coo_matrix(
                     (data, (r, c)), shape=(n_local, s_hi - s_lo)
                 ).tocsr()
                 np.add.at(counts, s_lo + c, 1)
+                del r, c, data
             else:
                 mat = sparse.csr_matrix((n_local, s_hi - s_lo), dtype=np.uint8)
             sparse.save_npz(scope_dir / f"chunk_{cm['chunk']:05d}.npz", mat)
             nnz_scope += int(mat.nnz)
         scope_nnz[scope] = nnz_scope
-        del df, arrays
+        del df
 
     assert ref_index is not None, f"{bench}: no scope pkl could be read"
 
