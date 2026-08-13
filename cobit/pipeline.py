@@ -98,13 +98,18 @@ def pick_best_trial(pof: list[dict], t_th: int) -> BestTrial:
     )
 
 
-def _slice_bundle(union: DatasetBundle, union_ids: np.ndarray, col_ids: np.ndarray) -> DatasetBundle:
+def _slice_bundle(
+    union: DatasetBundle,
+    union_ids: np.ndarray,
+    col_ids: np.ndarray,
+    dense_dtype=np.float32,
+) -> DatasetBundle:
     """Dense per-Q view of the shared sparse union-column bundle."""
     pos = np.searchsorted(union_ids, col_ids)
     assert np.array_equal(union_ids[pos], col_ids), "proxy ids missing from union"
 
     def densify(X):
-        return np.asarray(X.tocsc()[:, pos].todense(), dtype=np.float32)
+        return np.asarray(X.tocsc()[:, pos].todense(), dtype=dense_dtype)
 
     return dataclasses.replace(
         union,
@@ -133,11 +138,12 @@ def run_pipeline(cfg: CobitConfig, run_dir: Path, force: bool = False) -> dict:
         )
 
     # optional Algorithm 2 pair comparison at a pinned (Q, R)
+    dense_dtype = np.float64 if not cfg.data.bit_expand else np.float32
     if cfg.hpo.run_pair_comparison:
         q_cmp = cfg.hpo.pair_q or sorted(proxies)[0]
         if q_cmp not in proxies:
             raise ValueError(f"hpo.pair_q={q_cmp} is not one of selection.target_qs")
-        b = _slice_bundle(union, union_ids, proxies[q_cmp].col_ids)
+        b = _slice_bundle(union, union_ids, proxies[q_cmp].col_ids, dense_dtype=dense_dtype)
         dtrain = xgb.DMatrix(b.X_train, label=b.y_train)
         dval = xgb.DMatrix(b.X_val, label=b.y_val)
         compare_sampler_pruner_pairs(
@@ -178,7 +184,8 @@ def _run_for_q(
             log.info("Q=%d already complete - skipped", q)
             return rec
 
-    bundle = _slice_bundle(union, union_ids, pr.col_ids)
+    dense_dtype = np.float64 if not cfg.data.bit_expand else np.float32
+    bundle = _slice_bundle(union, union_ids, pr.col_ids, dense_dtype=dense_dtype)
     dtrain = xgb.DMatrix(bundle.X_train, label=bundle.y_train)
     dval = xgb.DMatrix(bundle.X_val, label=bundle.y_val)
     log.info(

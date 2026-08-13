@@ -45,9 +45,13 @@ def parse_column(column: str) -> tuple[str, int, int]:
 
 
 class Registry:
-    def __init__(self, nets: list[Net]):
+    def __init__(self, nets: list[Net], bit_expand: bool = True):
+        self.bit_expand = bit_expand
         self.nets = nets
-        self.n_features = nets[-1].base_col + nets[-1].width if nets else 0
+        if bit_expand:
+            self.n_features = nets[-1].base_col + nets[-1].width if nets else 0
+        else:
+            self.n_features = len(nets) if nets else 0
         self._by_scope: dict[str, list[Net]] = {}
         for n in nets:
             self._by_scope.setdefault(n.scope, []).append(n)
@@ -62,6 +66,11 @@ class Registry:
     def feature_names(self, ids=None) -> list[str]:
         """Names for the given global feature ids (or all)."""
         import numpy as np
+
+        if not self.bit_expand:
+            if ids is None:
+                return [n.column for n in self.nets]
+            return [self.nets[int(i)].column for i in ids]
 
         starts = np.array([n.base_col for n in self.nets])
         if ids is None:
@@ -85,6 +94,7 @@ class Registry:
             {
                 "content_hash": self.content_hash,
                 "n_features": self.n_features,
+                "bit_expand": self.bit_expand,
                 "nets": [
                     dict(scope=n.scope, column=n.column, path=n.path,
                          width=n.width, lo=n.lo, base_col=n.base_col)
@@ -96,17 +106,20 @@ class Registry:
     @classmethod
     def load(cls, path: Path) -> "Registry":
         raw = load_json(path)
-        reg = cls([Net(**d) for d in raw["nets"]])
+        reg = cls([Net(**d) for d in raw["nets"]], bit_expand=raw.get("bit_expand", True))
         if reg.content_hash != raw["content_hash"]:
             raise RuntimeError(f"registry content hash mismatch in {path}")
         return reg
 
 
-def build_registry(layout: DbLayout) -> Registry:
+def build_registry(layout: DbLayout, bit_expand: bool = True) -> Registry:
     """Read one benchmark pkl per scope (columns only) and canonicalize.
 
     Column sets are identical across benchmarks within a scope (verified),
     so any benchmark that has the scope works.
+
+    When bit_expand is False, each net becomes one feature (width=1) carrying
+    its raw toggle bitmask integer value, instead of width binary features.
     """
     nets: list[Net] = []
     base = 0
@@ -118,10 +131,15 @@ def build_registry(layout: DbLayout) -> Registry:
         df = pd.read_pickle(layout.func_pkl(scope, bench))
         for column in sorted(df.columns):
             path, width, lo = parse_column(column)
-            nets.append(Net(scope=scope, column=column, path=path, width=width,
-                            lo=lo, base_col=base))
-            base += width
-    reg = Registry(nets)
-    log.info("registry: %d nets, %d bit features, hash %s",
-             len(nets), reg.n_features, reg.content_hash)
+            if bit_expand:
+                nets.append(Net(scope=scope, column=column, path=path, width=width,
+                                lo=lo, base_col=base))
+                base += width
+            else:
+                nets.append(Net(scope=scope, column=column, path=path, width=1,
+                                lo=lo, base_col=base))
+                base += 1
+    reg = Registry(nets, bit_expand=bit_expand)
+    log.info("registry: %d nets, %d %sfeatures, hash %s",
+             len(nets), reg.n_features, "bit " if bit_expand else "", reg.content_hash)
     return reg

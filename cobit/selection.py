@@ -6,8 +6,12 @@ become the power proxies. Sweeping the penalty strength lambda (skglm's
 ``alpha``) produces different proxy counts Q; a log-grid sweep plus bisection
 targets the configured Q list.
 
-The binary features are NOT standardized (that would destroy sparsity and
-the 0/1 toggle semantics); the intercept absorbs baseline power.
+Feature scaling policy: binary (bit_expand=True) features are 0/1 and left
+unscaled (standardizing would destroy sparsity and the 0/1 toggle
+semantics); multi-bit (bit_expand=False) features are raw toggle bitmask
+integers whose magnitudes span ~90 orders of magnitude, so they are
+column-wise max-abs scaled to [-1, 1] inside ``select_proxies``. The
+intercept absorbs baseline power.
 """
 
 from __future__ import annotations
@@ -110,6 +114,31 @@ def alpha_max(X: sparse.spmatrix, y: np.ndarray) -> float:
     return float(np.max(grad)) / X.shape[0]
 
 
+def _maxabs_scale_columns(X: sparse.csc_matrix) -> tuple[sparse.csc_matrix, np.ndarray]:
+    """Column-wise max-abs scaling to [-1, 1]; sparsity is preserved.
+
+    Multi-bit (``bit_expand=False``) features are raw toggle bitmask integers
+    whose magnitudes span ~90 orders of magnitude (a 311-bit net's mask reaches
+    ~1e+93). Without scaling, ``alpha_max`` is ~1e+84, the log alpha grid
+    cannot reach the solvable range, skglm's Anderson acceleration hits
+    divide-by-zero, and each fit takes tens of minutes. Scaling each column by
+    its max |entry| brings every feature into [-1, 1], drops ``alpha_max`` to
+    ~O(10-100), and leaves the sparsity pattern untouched (column scaling only
+    rescales nonzero entries). Binary (``bit_expand=True``) features are 0/1
+    and are NOT routed through here.
+    """
+    indptr = X.indptr
+    abs_data = np.abs(X.data)
+    col_max = np.zeros(X.shape[1], dtype=np.float64)
+    for j in range(X.shape[1]):
+        s, e = int(indptr[j]), int(indptr[j + 1])
+        if e > s:
+            col_max[j] = abs_data[s:e].max()
+    inv = np.divide(1.0, col_max, out=np.ones_like(col_max), where=col_max > 0.0)
+    Xs = X.multiply(sparse.csc_matrix(inv.reshape(1, -1))).tocsc()
+    return Xs, col_max
+
+
 def _canon(alpha: float) -> float:
     """Canonical alpha key (6 significant digits) to avoid float near-dupes."""
     return float(f"{alpha:.6e}")
@@ -125,7 +154,15 @@ def select_proxies(
     """Run the lambda sweep and return one ProxyResult per target Q."""
     sel = make_selector(cfg)
     scfg = cfg.selection
+    if not cfg.data.bit_expand:
+        X, col_max = _maxabs_scale_columns(X)
+        log.info(
+            "multi-bit: max-abs column-scaled (col_max span %.3e .. %.3e)",
+            float(col_max.min()) if col_max.size else 0.0,
+            float(col_max.max()) if col_max.size else 0.0,
+        )
     a_max = alpha_max(X, y)
+    log.info("alpha_max = %.4e", a_max)
     if not np.isfinite(a_max) or a_max <= 0:
         if not cfg.runtime.allow_tiny:
             raise RuntimeError("degenerate labels: alpha_max is not positive")
@@ -184,7 +221,10 @@ def select_proxies(
             right = [a for a in cache if q_at(a) < eff_target]  # too few
             if not left:
                 # even the smallest alpha selects too few: extend the grid down
+                prev_q = q_at(best)
                 fit(min(cache) / 10.0)
+                if q_at(min(cache)) <= prev_q:
+                    break  # saturation: further alpha reduction doesn't increase Q
                 continue
             a_left, a_right = max(left), min(right) if right else max(cache)
             if a_left >= a_right:

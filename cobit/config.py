@@ -24,6 +24,7 @@ class DataConfig:
     target: str = "Pc(x_aq_core)"
     chunk_rows: int = 65536
     min_toggle_count: int = 1  # kept-bit threshold on train toggle counts
+    bit_expand: bool = True  # True: bit-slice multi-bit nets into binary features; False: use raw bitmask integers
 
 
 @dataclass

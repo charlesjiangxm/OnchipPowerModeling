@@ -127,7 +127,9 @@ def _inspect(cfg: CobitConfig) -> None:
         print("cache: not built (run build-dataset)")
         return
     reg = load_json(cache / "nets.json")
-    print(f"cache: {cache} | {len(reg['nets'])} nets, {reg['n_features']} bit features")
+    be = reg.get("bit_expand", True)
+    feat_label = "bit features" if be else "net features"
+    print(f"cache: {cache} | {len(reg['nets'])} nets, {reg['n_features']} {feat_label}")
     for b in layout.benchmarks:
         mpath = cache / "features" / b / "manifest.json"
         if not mpath.exists():
@@ -143,7 +145,8 @@ def _inspect(cfg: CobitConfig) -> None:
             total = None
             for b in z.files:
                 total = z[b].astype(np.uint64) if total is None else total + z[b]
-        print(f"bits toggling anywhere: {(total > 0).sum()} / {total.size}")
+        toggling_label = "bits" if be else "nets"
+        print(f"{toggling_label} toggling anywhere: {(total > 0).sum()} / {total.size}")
 
 
 if __name__ == "__main__":

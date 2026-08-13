@@ -67,6 +67,14 @@ class DatasetCache:
     def manifest(self, bench: str) -> dict:
         return load_json(self.cache / "features" / bench / "manifest.json")
 
+    @property
+    def _data_dtype(self):
+        return np.uint8 if self.cfg.data.bit_expand else np.float64
+
+    @property
+    def _dense_dtype(self):
+        return np.float32 if self.cfg.data.bit_expand else np.float64
+
     def n_rows(self, bench: str) -> int:
         return int(self.manifest(bench)["n_rows"])
 
@@ -140,7 +148,7 @@ class DatasetCache:
             lo = max(start, c_start) - c_start
             hi = min(stop, c_stop) - c_start
             n_local = hi - lo
-            block = sparse.csr_matrix((n_local, col_ids.size), dtype=np.uint8)
+            block = sparse.csr_matrix((n_local, col_ids.size), dtype=self._data_dtype)
             parts: list[tuple[np.ndarray, sparse.csr_matrix]] = []
             for scope, s_lo, sel_positions in scope_plans:
                 shard_path = bdir / scope / f"chunk_{cm['chunk']:05d}.npz"
@@ -168,9 +176,9 @@ class DatasetCache:
             out_blocks.append(block)
 
         X = sparse.vstack(out_blocks, format="csr") if out_blocks else sparse.csr_matrix(
-            (0, col_ids.size), dtype=np.uint8
+            (0, col_ids.size), dtype=self._data_dtype
         )
-        return np.asarray(X.todense(), dtype=np.float32) if dense else X
+        return np.asarray(X.todense(), dtype=self._dense_dtype) if dense else X
 
     # -- split assembly ---------------------------------------------------------
     def split_rows(self, bench: str) -> tuple[slice, slice]:
@@ -206,12 +214,12 @@ class DatasetCache:
                 slices[b] = slice(cursor, cursor + y.size)
                 cursor += y.size
             if dense:
-                Xall = np.vstack(mats) if mats else np.zeros((0, col_ids.size), np.float32)
+                Xall = np.vstack(mats) if mats else np.zeros((0, col_ids.size), self._dense_dtype)
             else:
                 Xall = (
                     sparse.vstack(mats, format="csr")
                     if mats
-                    else sparse.csr_matrix((0, col_ids.size), dtype=np.uint8)
+                    else sparse.csr_matrix((0, col_ids.size), dtype=self._data_dtype)
                 )
             yall = np.concatenate(ys) if ys else np.zeros(0)
             return Xall, yall, slices
