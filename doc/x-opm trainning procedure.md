@@ -1,15 +1,19 @@
 For the .pkls directly under @c906_db_net_1cyc_20260729/aq_core/cp0, perform the training based on the following procedure. The source code should be saved to @x-opm directory, the results, intermediate files, dataset, reports should be saved to @out/x-opm directory. Use @~/anaconda3 as the python interpreter. 
-1. Calculate the variance on the raw dataset, drop the feature with 0-variance w.r.t. the target.
-2. classify all the features with non-zero variance into the 4 types (type-A, type-B, type-C, type-D). They are classified based on the signal names. Follow the following rules:
+1. Calculate the variance on the raw dataset, drop 
+    - the feature with 0-variance w.r.t. the target.
+    - the duplicated features, means the raw signal columns that carry identical values across every training cycle. These are normally physical net dumped at multiple hierarchy depth.
+2. classify all the features with non-zero variance into the 4 types (type-A, type-B, type-C, type-D). They are classified based on the signal names (matched on the full hierarchy path, lowercased). Follow the following rules:
     - type A (control signals): signal name contains `_en` or `_vld` or `_stall` or `_req` or `_busy` or `_idle`. 
-    - type B (clock gating signals): signal name contains both `clk` and `en`.
+    - type B (clock gating signals): signal name contains both `clk` and `_en`. (Requiring `_en` rather than a bare `en` avoids mis-tagging plain clocks such as `fence_clk`.)
     - type C (data bus): signal name contains `data`.
-    - type D (control and status payload): signals that is not type A, B, D are all type C.
-3. data transformation, perform the following steps: 
+    - type D (control and status payload): all signals that are not type A, B, or C.
+    - When a signal matches more than one rule, apply priority **B > A > C > D**. e.g. a clock-gating enable matches both A and B and is assigned B; a `..._data_vld` matches both A and C and is assigned A.
+3. data transformation, perform the following steps. Note: the raw `*_func.pkl` cells are per-cycle signal *states* (not toggles), so toggles are computed explicitly below, per case (no carry across benchmark boundaries).
     - For type A and type B signals: If a signal is multi-bit, you should divide it into single-bit. For example if a signal is x[14:0], you should save x[14], x[13], ... x[0] in total 15 features instead of one feature x[14:0]. This makes all type A abd type B signals single-bit.
     - For type A signals: If a signal name contains `_stall` or `_idle`, inverse the value of this signal (0 to 1, 1 to 0). Because these two signal's value is negative correlated to the power.
-    - For type D signals: calculate the hamming distance of the signal toggle. For example: we have a signal `data[4095:0]`, the total simulation cycle is 1000. first calculates its toggle by XOR between `data[4095:0]` and its delayed-one-cycle signal `data_dly1[4095:0]` (append 0 at the end to make it 1000 cycle), the result is `data_toggle[4095:0]`. Then we calculate the hamming distance of the `data_toggle`, get a 1000 cycle `data_toggle_hamming[12:0]`. It is 13b because the largest hamming distance of `data` is 4096, which requires 13-bit to store it. Finally, use `data_toggle_hamming[12:0]` to replace `data[4095:0]` in the trainning set.
-4. Scale all features in the training and testing dataset to be between 0 to 1 by dividing the original interger signal value with its maximum value. For example a signal x[63:0]'s maximum value is $2^{64}-1$. You should scale x as $x/(2^{64}-1)$.
+    - For type C signals (data bus): calculate the hamming distance of the signal toggle. For example: we have a signal `data[4095:0]`, the total simulation cycle is 1000. first calculates its toggle by XOR between `data[4095:0]` and its delayed-one-cycle signal `data_dly1[4095:0]` (append 0 at the end to make it 1000 cycle), the result is `data_toggle[4095:0]`. Then we calculate the hamming distance of the `data_toggle`, get a 1000 cycle `data_toggle_hamming[12:0]`. It is 13b because the largest hamming distance of `data` is 4096, which requires 13-bit to store it. Finally, use `data_toggle_hamming[12:0]` to replace `data[4095:0]` in the trainning set.
+    - For type D signals: keep the raw integer value unchanged (it is scaled in step 4).
+4. Scale all features in the training and testing dataset to be between 0 to 1 by dividing the original interger signal value with its maximum value. For example a signal x[63:0]'s maximum value is $2^{64}-1$. You should scale x as $x/(2^{64}-1)$. Single-bit type-A/B features are already 0/1 (max = 1). The type-C `data_toggle_hamming` feature is scaled by the bus width $W$ (its maximum possible hamming distance) so it lands in $[0,1]$.
 5. save the intermediate files and reports
     - store a `.csv` table recording the features processed by the former steps. Including the feature name, feature type, the rule you follow to determine that signal belongs to that type, the data width, the min, max, mean value of this feature.
     - Store the training and testing dataset as pandas dataframe in .pkl format. Each case and each type should be stored as a separate .pkl file. All pkl files should be stored under @out/x-opm/dataset/, seperately stored to `trainset` and `testset` folder.

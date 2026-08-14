@@ -1,0 +1,40 @@
+# x-opm dataset build config for the CP0 module (steps 1-5).
+db_root: c906_db_net_1cyc_20260729
+scope: cp0
+target: x_aq_core/Pc(x_aq_cp0_top)
+output_dir: out/x-opm
+
+cases:
+  - cache
+  - conv_softmax
+  - coremark
+  - csr
+  - debug
+  - exception
+  - interrupt
+  - ISA_FP
+  - ISA_INT
+  - ISA_LS
+  - ISA_THEAD
+  - MMU
+
+# leave-benchmarks-out split (matches cobit schemeA); add coremark for schemeB.
+test_benchmarks:
+  - conv_softmax
+
+# Feature engineering:
+#   type A/B -> bit-split to single bits (A: invert _stall/_idle)
+#   type C   -> toggle -> Hamming distance scalar (data buses)
+#   type D   -> raw integer scaled by 2^width-1
+hamming_types: [C]
+hamming_count_initial: true
+detect_duplicates: true
+dedup_identical: true
+
+# classification keyword tokens (matched on the full lowercased path)
+rules:
+  a_tokens: ["_en", "_vld", "_stall", "_req", "_busy", "_idle"]
+  b_clk_token: clk
+  b_en_token: _en
+  c_token: data
+  invert_tokens: ["_stall", "_idle"]
