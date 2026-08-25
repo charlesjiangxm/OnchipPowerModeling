@@ -21,6 +21,25 @@ from ..utils import log
 
 TOP_SCOPE = "top"
 
+# Pickles may be stored raw (``X.pkl``) or zstd-compressed (``X.pkl.zst``).
+# pandas infers zstd from the ``.zst`` extension, so we only have to resolve the
+# path; readers stay unchanged. Prefer the compressed sibling when it exists.
+_FUNC_SUFFIXES = ("_func.pkl.zst", "_func.pkl")
+
+
+def _pick(pkl: Path) -> Path:
+    """``X.pkl`` -> ``X.pkl.zst`` if that compressed sibling exists, else ``X.pkl``."""
+    z = pkl.with_name(pkl.name + ".zst")
+    return z if z.exists() else pkl
+
+
+def _bench_stem(name: str) -> str:
+    """Strip a ``_func.pkl`` / ``_func.pkl.zst`` suffix to recover the benchmark name."""
+    for suf in _FUNC_SUFFIXES:
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return name
+
 
 @dataclasses.dataclass
 class DbLayout:
@@ -32,10 +51,10 @@ class DbLayout:
     def func_pkl(self, scope: str, bench: str) -> Path:
         core = self.db_root / "aq_core"
         base = core if scope == TOP_SCOPE else core / scope
-        return base / f"{bench}_func.pkl"
+        return _pick(base / f"{bench}_func.pkl")
 
     def pwr_pkl(self, bench: str) -> Path:
-        return self.db_root / "pwr" / f"{bench}_pwr.pkl"
+        return _pick(self.db_root / "pwr" / f"{bench}_pwr.pkl")
 
     def missing_scopes(self, bench: str) -> list[str]:
         return [s for s in self.scopes if s not in self.coverage[bench]]
@@ -59,14 +78,14 @@ def discover(db_root: str | Path) -> DbLayout:
     coverage: dict[str, set[str]] = {}
     for scope in scopes:
         base = core if scope == TOP_SCOPE else core / scope
-        for pkl in base.glob("*_func.pkl"):
-            bench = pkl.name[: -len("_func.pkl")]
+        for pkl in list(base.glob("*_func.pkl")) + list(base.glob("*_func.pkl.zst")):
+            bench = _bench_stem(pkl.name)
             benches.add(bench)
             coverage.setdefault(bench, set()).add(scope)
 
     kept = []
     for bench in sorted(benches):
-        if not (db_root / "pwr" / f"{bench}_pwr.pkl").is_file():
+        if not _pick(db_root / "pwr" / f"{bench}_pwr.pkl").is_file():
             log.warning("benchmark %s has func pkls but no pwr pkl - skipped", bench)
             continue
         kept.append(bench)

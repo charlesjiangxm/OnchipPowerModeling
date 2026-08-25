@@ -28,7 +28,7 @@ from scipy import sparse
 from ..config import CobitConfig
 from ..utils import atomic_write_bytes, load_json, log, save_json
 from .bitmask import expand_net_column
-from .discovery import DbLayout, discover
+from .discovery import DbLayout, _pick, discover
 from .registry import Registry, build_registry
 
 
@@ -63,7 +63,7 @@ def _find_subscope_pkls(layout: DbLayout, scope: str, bench: str) -> list[Path]:
     sub_pkls: list[Path] = []
     for sub_dir in sorted(scope_dir.iterdir()):
         if sub_dir.is_dir():
-            pkl = sub_dir / f"{bench}_func.pkl"
+            pkl = _pick(sub_dir / f"{bench}_func.pkl")
             if pkl.exists():
                 sub_pkls.append(pkl)
     return sub_pkls

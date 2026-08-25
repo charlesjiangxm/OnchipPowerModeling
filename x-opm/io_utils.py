@@ -33,7 +33,11 @@ def _atomic_write(path: str, write_fn) -> None:
 
 
 def save_pickle(obj: Any, path: str) -> None:
-    _atomic_write(path, lambda tmp: pd.to_pickle(obj, tmp))
+    # The atomic write goes through a ``.tmp`` file, so pandas can't infer the
+    # compression from the final extension -- pass it explicitly when the target
+    # is a ``.zst`` (leaving plain ``.pkl`` writers on raw pickle).
+    comp = "zstd" if path.endswith(".zst") else "infer"
+    _atomic_write(path, lambda tmp: pd.to_pickle(obj, tmp, compression=comp))
 
 
 def save_json(obj: Any, path: str) -> None:

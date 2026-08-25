@@ -51,8 +51,18 @@ class LoadedData:
     feature_names: list = field(default_factory=list)
 
 
+def _resolve_pkl(path: Path) -> Path:
+    """Prefer a zstd-compressed sibling (``X.pkl`` -> ``X.pkl.zst``) if present.
+
+    pandas infers zstd from the ``.zst`` extension, so ``read_pickle`` needs no
+    other change -- this just lets the loader transparently read a migrated dir.
+    """
+    z = path.with_name(path.name + ".zst")
+    return z if z.exists() else path
+
+
 def _load_one_pkl(path: Path, max_rows: int | None = None) -> np.ndarray:
-    df = pd.read_pickle(path)
+    df = pd.read_pickle(_resolve_pkl(Path(path)))
     if max_rows is not None and len(df) > max_rows:
         df = df.iloc[:max_rows]
     feature_names = list(df.columns)
