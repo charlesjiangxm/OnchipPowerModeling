@@ -6,6 +6,7 @@ local/
 db
 .cursor/
 .vscode/
+dataset/
 
 # Ignore the Gemfile that is generated
 Gemfile.lock
