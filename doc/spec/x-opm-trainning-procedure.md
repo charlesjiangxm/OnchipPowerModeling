@@ -4,7 +4,7 @@
 
 ### Rules
 - Use @~/anaconda3 as the python interpreter. 
-- The datasets are stored as `.pkl.zst`, the column contains multi-bit signals, they are features. The row contains per-cycle signal values, they are samples.
+- The datasets are stored as `.pkl.zst` under @dataset. The `_func.pkl.zst` is the `x`, the `_pwr.pkl.zst` is the 'y'. The column contains multi-bit signals, they are features. The row contains per-cycle signal values, they are samples.
 - All function and classes should be implemented in the python file called `data_preprocess.py` put under @src/xopm_lib
 
 ### Procedures  
@@ -31,13 +31,11 @@ not implemented
 
 
 
-## Feature Interaction
-
 ### Rules
 - RuleFit's source code can be found in @third_party/rulefit. Feature interaction corresponds to the `rule generation` step of the RuleFit. 
 - The input dataset should be @dataset_processed/. Nothing from @dataset shall be used.
 - All function and classes should be implemented in the python file called `model_regression.py` put under @src/xopm_lib
-
+- The modules `cp0`, `idu`, `ifu`, `iu`, `lsu`, `rtu`, `vidu`, `vpu` are trained seperately. There target (pwr) is stored in `pwr` directory. You should use each modules' corresponding power (column) to train that module. The testing set is `conv_softmax` and `coremark`, others are training set. Note that for `cp0`, `idu`, `ifu`, `iu`, `vidu`, additional training set (random test) are placed under `rand_1cyc_20260830` directories. 
 
 ### Procedures
 1. Train with RuleFit, with the following constrains: 
@@ -50,6 +48,7 @@ not implemented
     - Friedman overall H-statistic plot, Friedman pairwise H-statistic plot.
     - SHAP beeswarm plot, SHAP interaction top pairs plot
     - After you trained the model and get the final result. Plot the residual map (train, val, test) of the final training result; plot the predict value/true value VS time scatter plot (train, val, test); 
+    - Add the predicted power of each module together as the top module (aq_core)'s predicted power. Calculate R^2, MAPE, RMSE against aq_core's true power (@dataset/c906_db_net_1cyc_20260729/pwr), plot a residual plot (train, test) in one figure.
     - Write a `report.md`, include the parameter you used, the dataset you used (dataset name and dimension), the analysis results, and trian/test/val R^2, MAPE, RMSE.
 
 
