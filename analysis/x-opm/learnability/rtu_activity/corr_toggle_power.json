@@ -1,0 +1,626 @@
+[
+  {
+    "case": "cache",
+    "n_cycles": 8313,
+    "switching": {
+      "headline_spearman": 0.607,
+      "headline_null95": 0.205,
+      "headline_honest": 0.402,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 64,
+      "pearson_at_best": 0.61,
+      "pearson_max_over_headline": 0.61,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.082,
+          "spearman_null95": 0.063,
+          "pearson": 0.146,
+          "pearson_null95": 0.051,
+          "best_W": 1
+        },
+        "maxstep": {
+          "spearman": 0.607,
+          "spearman_null95": 0.195,
+          "pearson": 0.61,
+          "pearson_null95": 0.191,
+          "best_W": 64
+        },
+        "range": {
+          "spearman": 0.643,
+          "spearman_null95": 0.198,
+          "pearson": 0.698,
+          "pearson_null95": 0.186,
+          "best_W": 64
+        },
+        "level": {
+          "spearman": 0.239,
+          "spearman_null95": 0.188,
+          "pearson": 0.12,
+          "pearson_null95": 0.205,
+          "best_W": 64
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.829,
+      "n_signals_relevant": 91,
+      "n_signals_tested": 233
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.829, 91 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "conv_softmax",
+    "n_cycles": 1438221,
+    "switching": {
+      "headline_spearman": 0.694,
+      "headline_null95": 0.472,
+      "headline_honest": 0.222,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 16,
+      "pearson_at_best": 0.633,
+      "pearson_max_over_headline": 0.774,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.537,
+          "spearman_null95": 0.073,
+          "pearson": 0.606,
+          "pearson_null95": 0.052,
+          "best_W": 8
+        },
+        "maxstep": {
+          "spearman": 0.646,
+          "spearman_null95": 0.06,
+          "pearson": 0.624,
+          "pearson_null95": 0.044,
+          "best_W": 8
+        },
+        "range": {
+          "spearman": 0.76,
+          "spearman_null95": 0.151,
+          "pearson": 0.682,
+          "pearson_null95": 0.125,
+          "best_W": 8
+        },
+        "level": {
+          "spearman": 0.518,
+          "spearman_null95": 0.138,
+          "pearson": 0.616,
+          "pearson_null95": 0.112,
+          "best_W": 4
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.803,
+      "n_signals_relevant": 81,
+      "n_signals_tested": 338
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.803, 81 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "coremark",
+    "n_cycles": 598030,
+    "switching": {
+      "headline_spearman": 0.476,
+      "headline_null95": 0.171,
+      "headline_honest": 0.304,
+      "headline_pvalue": 0.0,
+      "best_target": "tv",
+      "best_W": 512,
+      "pearson_at_best": 0.871,
+      "pearson_max_over_headline": 0.871,
+      "burst_concentrated": true,
+      "per_target": {
+        "tv": {
+          "spearman": 0.476,
+          "spearman_null95": 0.129,
+          "pearson": 0.871,
+          "pearson_null95": 0.204,
+          "best_W": 512
+        },
+        "maxstep": {
+          "spearman": 0.288,
+          "spearman_null95": 0.034,
+          "pearson": 0.536,
+          "pearson_null95": 0.088,
+          "best_W": 8
+        },
+        "range": {
+          "spearman": 0.224,
+          "spearman_null95": 0.032,
+          "pearson": 0.362,
+          "pearson_null95": 0.056,
+          "best_W": 4
+        },
+        "level": {
+          "spearman": 0.774,
+          "spearman_null95": 0.177,
+          "pearson": 0.876,
+          "pearson_null95": 0.211,
+          "best_W": 512
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.725,
+      "n_signals_relevant": 90,
+      "n_signals_tested": 326
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it, concentrated in high-switching bursts.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.725, 90 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "csr",
+    "n_cycles": 2736,
+    "switching": {
+      "headline_spearman": 0.511,
+      "headline_null95": 0.27,
+      "headline_honest": 0.241,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 16,
+      "pearson_at_best": 0.565,
+      "pearson_max_over_headline": 0.565,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.187,
+          "spearman_null95": 0.106,
+          "pearson": 0.309,
+          "pearson_null95": 0.11,
+          "best_W": 2
+        },
+        "maxstep": {
+          "spearman": 0.511,
+          "spearman_null95": 0.251,
+          "pearson": 0.565,
+          "pearson_null95": 0.216,
+          "best_W": 16
+        },
+        "range": {
+          "spearman": 0.638,
+          "spearman_null95": 0.287,
+          "pearson": 0.623,
+          "pearson_null95": 0.241,
+          "best_W": 16
+        },
+        "level": {
+          "spearman": 0.087,
+          "spearman_null95": 0.129,
+          "pearson": 0.064,
+          "pearson_null95": 0.136,
+          "best_W": 1
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.925,
+      "n_signals_relevant": 81,
+      "n_signals_tested": 221
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.925, 81 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "debug",
+    "n_cycles": 39228,
+    "switching": {
+      "headline_spearman": 0.757,
+      "headline_null95": 0.368,
+      "headline_honest": 0.39,
+      "headline_pvalue": 0.0,
+      "best_target": "tv",
+      "best_W": 256,
+      "pearson_at_best": 0.435,
+      "pearson_max_over_headline": 0.794,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.757,
+          "spearman_null95": 0.307,
+          "pearson": 0.435,
+          "pearson_null95": 0.382,
+          "best_W": 256
+        },
+        "maxstep": {
+          "spearman": 0.738,
+          "spearman_null95": 0.218,
+          "pearson": 0.611,
+          "pearson_null95": 0.273,
+          "best_W": 256
+        },
+        "range": {
+          "spearman": 0.749,
+          "spearman_null95": 0.197,
+          "pearson": 0.614,
+          "pearson_null95": 0.241,
+          "best_W": 256
+        },
+        "level": {
+          "spearman": 0.761,
+          "spearman_null95": 0.297,
+          "pearson": 0.196,
+          "pearson_null95": 0.329,
+          "best_W": 256
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.827,
+      "n_signals_relevant": 97,
+      "n_signals_tested": 219
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.827, 97 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "exception",
+    "n_cycles": 12169,
+    "switching": {
+      "headline_spearman": 0.738,
+      "headline_null95": 0.262,
+      "headline_honest": 0.476,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 64,
+      "pearson_at_best": 0.771,
+      "pearson_max_over_headline": 0.771,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.361,
+          "spearman_null95": 0.144,
+          "pearson": 0.446,
+          "pearson_null95": 0.151,
+          "best_W": 4
+        },
+        "maxstep": {
+          "spearman": 0.738,
+          "spearman_null95": 0.19,
+          "pearson": 0.771,
+          "pearson_null95": 0.278,
+          "best_W": 64
+        },
+        "range": {
+          "spearman": 0.817,
+          "spearman_null95": 0.218,
+          "pearson": 0.775,
+          "pearson_null95": 0.241,
+          "best_W": 64
+        },
+        "level": {
+          "spearman": 0.252,
+          "spearman_null95": 0.127,
+          "pearson": 0.257,
+          "pearson_null95": 0.133,
+          "best_W": 2
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.878,
+      "n_signals_relevant": 86,
+      "n_signals_tested": 290
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.878, 86 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "interrupt",
+    "n_cycles": 3563,
+    "switching": {
+      "headline_spearman": 0.533,
+      "headline_null95": 0.295,
+      "headline_honest": 0.238,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 16,
+      "pearson_at_best": 0.507,
+      "pearson_max_over_headline": 0.507,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.257,
+          "spearman_null95": 0.147,
+          "pearson": 0.275,
+          "pearson_null95": 0.143,
+          "best_W": 2
+        },
+        "maxstep": {
+          "spearman": 0.533,
+          "spearman_null95": 0.286,
+          "pearson": 0.507,
+          "pearson_null95": 0.249,
+          "best_W": 16
+        },
+        "range": {
+          "spearman": 0.632,
+          "spearman_null95": 0.315,
+          "pearson": 0.624,
+          "pearson_null95": 0.235,
+          "best_W": 16
+        },
+        "level": {
+          "spearman": 0.17,
+          "spearman_null95": 0.168,
+          "pearson": 0.156,
+          "pearson_null95": 0.176,
+          "best_W": 1
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.917,
+      "n_signals_relevant": 92,
+      "n_signals_tested": 244
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.917, 92 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "ISA_FP",
+    "n_cycles": 71076,
+    "switching": {
+      "headline_spearman": 0.86,
+      "headline_null95": 0.278,
+      "headline_honest": 0.582,
+      "headline_pvalue": 0.0,
+      "best_target": "tv",
+      "best_W": 128,
+      "pearson_at_best": 0.806,
+      "pearson_max_over_headline": 0.875,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.858,
+          "spearman_null95": 0.142,
+          "pearson": 0.875,
+          "pearson_null95": 0.135,
+          "best_W": 64
+        },
+        "maxstep": {
+          "spearman": 0.859,
+          "spearman_null95": 0.121,
+          "pearson": 0.821,
+          "pearson_null95": 0.143,
+          "best_W": 64
+        },
+        "range": {
+          "spearman": 0.874,
+          "spearman_null95": 0.121,
+          "pearson": 0.827,
+          "pearson_null95": 0.142,
+          "best_W": 64
+        },
+        "level": {
+          "spearman": 0.881,
+          "spearman_null95": 0.148,
+          "pearson": 0.682,
+          "pearson_null95": 0.113,
+          "best_W": 128
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.872,
+      "n_signals_relevant": 126,
+      "n_signals_tested": 314
+    },
+    "verdict": "LEARNABLE \u2014 datapath switching drives power (set model window \u2248 128 cyc)."
+  },
+  {
+    "case": "ISA_INT",
+    "n_cycles": 30030,
+    "switching": {
+      "headline_spearman": 0.825,
+      "headline_null95": 0.414,
+      "headline_honest": 0.411,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 64,
+      "pearson_at_best": 0.76,
+      "pearson_max_over_headline": 0.785,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.65,
+          "spearman_null95": 0.153,
+          "pearson": 0.714,
+          "pearson_null95": 0.162,
+          "best_W": 16
+        },
+        "maxstep": {
+          "spearman": 0.698,
+          "spearman_null95": 0.16,
+          "pearson": 0.71,
+          "pearson_null95": 0.171,
+          "best_W": 16
+        },
+        "range": {
+          "spearman": 0.779,
+          "spearman_null95": 0.217,
+          "pearson": 0.803,
+          "pearson_null95": 0.23,
+          "best_W": 32
+        },
+        "level": {
+          "spearman": 0.626,
+          "spearman_null95": 0.134,
+          "pearson": 0.672,
+          "pearson_null95": 0.144,
+          "best_W": 16
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.891,
+      "n_signals_relevant": 126,
+      "n_signals_tested": 288
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.891, 126 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "ISA_LS",
+    "n_cycles": 83386,
+    "switching": {
+      "headline_spearman": 0.843,
+      "headline_null95": 0.194,
+      "headline_honest": 0.649,
+      "headline_pvalue": 0.0,
+      "best_target": "tv",
+      "best_W": 128,
+      "pearson_at_best": 0.622,
+      "pearson_max_over_headline": 0.802,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.843,
+          "spearman_null95": 0.127,
+          "pearson": 0.622,
+          "pearson_null95": 0.098,
+          "best_W": 128
+        },
+        "maxstep": {
+          "spearman": 0.795,
+          "spearman_null95": 0.137,
+          "pearson": 0.674,
+          "pearson_null95": 0.118,
+          "best_W": 64
+        },
+        "range": {
+          "spearman": 0.863,
+          "spearman_null95": 0.118,
+          "pearson": 0.706,
+          "pearson_null95": 0.122,
+          "best_W": 128
+        },
+        "level": {
+          "spearman": 0.852,
+          "spearman_null95": 0.121,
+          "pearson": 0.605,
+          "pearson_null95": 0.094,
+          "best_W": 128
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.921,
+      "n_signals_relevant": 131,
+      "n_signals_tested": 276
+    },
+    "verdict": "LEARNABLE \u2014 datapath switching drives power (set model window \u2248 128 cyc)."
+  },
+  {
+    "case": "ISA_THEAD",
+    "n_cycles": 21143,
+    "switching": {
+      "headline_spearman": 0.809,
+      "headline_null95": 0.597,
+      "headline_honest": 0.212,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 64,
+      "pearson_at_best": 0.78,
+      "pearson_max_over_headline": 0.795,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.632,
+          "spearman_null95": 0.24,
+          "pearson": 0.739,
+          "pearson_null95": 0.279,
+          "best_W": 16
+        },
+        "maxstep": {
+          "spearman": 0.674,
+          "spearman_null95": 0.239,
+          "pearson": 0.751,
+          "pearson_null95": 0.305,
+          "best_W": 16
+        },
+        "range": {
+          "spearman": 0.769,
+          "spearman_null95": 0.289,
+          "pearson": 0.835,
+          "pearson_null95": 0.342,
+          "best_W": 32
+        },
+        "level": {
+          "spearman": 0.671,
+          "spearman_null95": 0.279,
+          "pearson": 0.651,
+          "pearson_null95": 0.287,
+          "best_W": 32
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.911,
+      "n_signals_relevant": 149,
+      "n_signals_tested": 302
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.911, 149 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  },
+  {
+    "case": "MMU",
+    "n_cycles": 4233,
+    "switching": {
+      "headline_spearman": 0.628,
+      "headline_null95": 0.283,
+      "headline_honest": 0.345,
+      "headline_pvalue": 0.0,
+      "best_target": "maxstep",
+      "best_W": 32,
+      "pearson_at_best": 0.67,
+      "pearson_max_over_headline": 0.67,
+      "burst_concentrated": false,
+      "per_target": {
+        "tv": {
+          "spearman": 0.266,
+          "spearman_null95": 0.14,
+          "pearson": 0.317,
+          "pearson_null95": 0.127,
+          "best_W": 2
+        },
+        "maxstep": {
+          "spearman": 0.628,
+          "spearman_null95": 0.27,
+          "pearson": 0.67,
+          "pearson_null95": 0.253,
+          "best_W": 32
+        },
+        "range": {
+          "spearman": 0.73,
+          "spearman_null95": 0.273,
+          "pearson": 0.733,
+          "pearson_null95": 0.263,
+          "best_W": 32
+        },
+        "level": {
+          "spearman": 0.174,
+          "spearman_null95": 0.167,
+          "pearson": 0.177,
+          "pearson_null95": 0.181,
+          "best_W": 1
+        }
+      }
+    },
+    "level": {
+      "available": true,
+      "best_lvl_corr": 0.901,
+      "n_signals_relevant": 94,
+      "n_signals_tested": 272
+    },
+    "verdict": "PARTIAL \u2014 switching explains some of it.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.901, 94 signals >|0.3|) \u2192 LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C."
+  }
+]

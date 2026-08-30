@@ -1,0 +1,426 @@
+===== module vidu  Sun Aug 16 11:45:01 AM +08 2026 =====
+--- compute_series ---
+module=vidu  cases=['cache', 'conv_softmax', 'coremark', 'csr', 'debug', 'exception', 'interrupt', 'ISA_FP', 'ISA_INT', 'ISA_LS', 'ISA_THEAD', 'MMU']  out=/ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity
+computed csr 2736
+computed cache 8313
+computed exception 12169
+computed interrupt 3563
+computed debug 39228
+computed ISA_INT 30030
+computed ISA_FP 71076
+computed ISA_THEAD 21143
+computed MMU 4233
+computed ISA_LS 83386
+computed coremark 598030
+computed conv_softmax 1438221
+plotted cache ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_cache.png corr 0.121
+plotted conv_softmax ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_conv_softmax.png corr 0.662
+plotted coremark ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_coremark.png corr 0.246
+plotted csr ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_csr.png corr 0.16
+plotted debug ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_debug.png corr 0.092
+plotted exception ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_exception.png corr 0.234
+plotted interrupt ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_interrupt.png corr 0.216
+plotted ISA_FP ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_ISA_FP.png corr 0.514
+plotted ISA_INT ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_ISA_INT.png corr 0.324
+plotted ISA_LS ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_ISA_LS.png corr 0.294
+plotted ISA_THEAD ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_ISA_THEAD.png corr 0.337
+plotted MMU ->  /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/vpu_wave_MMU.png corr 0.188
+--- compute_signal_stats ---
+module=vidu  cases=['cache', 'conv_softmax', 'coremark', 'csr', 'debug', 'exception', 'interrupt', 'ISA_FP', 'ISA_INT', 'ISA_LS', 'ISA_THEAD', 'MMU']  out=/ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity
+done csr
+done cache
+done exception
+done debug
+done interrupt
+done ISA_INT
+done ISA_FP
+done ISA_LS
+done ISA_THEAD
+done MMU
+done coremark
+done conv_softmax
+[
+  {
+    "case": "csr",
+    "n_cycles": 2736,
+    "n_signals": 1402,
+    "n_constant_signals": 1051,
+    "big_step_thr_mW": 1.3353,
+    "n_big_steps": 28,
+    "coverage_by_informative_edge(er<0.5)": 0.929,
+    "coverage_by_any_nonclock_edge": 0.929,
+    "mean_abs_dP_mW": 0.5302
+  },
+  {
+    "case": "cache",
+    "n_cycles": 8313,
+    "n_signals": 1402,
+    "n_constant_signals": 1063,
+    "big_step_thr_mW": 1.1633,
+    "n_big_steps": 706,
+    "coverage_by_informative_edge(er<0.5)": 0.074,
+    "coverage_by_any_nonclock_edge": 0.074,
+    "mean_abs_dP_mW": 0.5239
+  },
+  {
+    "case": "exception",
+    "n_cycles": 12169,
+    "n_signals": 1402,
+    "n_constant_signals": 1029,
+    "big_step_thr_mW": 1.4512,
+    "n_big_steps": 122,
+    "coverage_by_informative_edge(er<0.5)": 0.992,
+    "coverage_by_any_nonclock_edge": 0.992,
+    "mean_abs_dP_mW": 0.537
+  },
+  {
+    "case": "debug",
+    "n_cycles": 39228,
+    "n_signals": 1402,
+    "n_constant_signals": 985,
+    "big_step_thr_mW": 1.2023,
+    "n_big_steps": 393,
+    "coverage_by_informative_edge(er<0.5)": 0.746,
+    "coverage_by_any_nonclock_edge": 0.746,
+    "mean_abs_dP_mW": 0.5243
+  },
+  {
+    "case": "interrupt",
+    "n_cycles": 3563,
+    "n_signals": 1402,
+    "n_constant_signals": 1047,
+    "big_step_thr_mW": 1.2877,
+    "n_big_steps": 37,
+    "coverage_by_informative_edge(er<0.5)": 0.973,
+    "coverage_by_any_nonclock_edge": 0.973,
+    "mean_abs_dP_mW": 0.5315
+  },
+  {
+    "case": "ISA_INT",
+    "n_cycles": 30030,
+    "n_signals": 1402,
+    "n_constant_signals": 884,
+    "big_step_thr_mW": 1.3794,
+    "n_big_steps": 301,
+    "coverage_by_informative_edge(er<0.5)": 0.98,
+    "coverage_by_any_nonclock_edge": 0.98,
+    "mean_abs_dP_mW": 0.5393
+  },
+  {
+    "case": "ISA_FP",
+    "n_cycles": 71076,
+    "n_signals": 1402,
+    "n_constant_signals": 835,
+    "big_step_thr_mW": 1.8809,
+    "n_big_steps": 711,
+    "coverage_by_informative_edge(er<0.5)": 1.0,
+    "coverage_by_any_nonclock_edge": 1.0,
+    "mean_abs_dP_mW": 0.5689
+  },
+  {
+    "case": "ISA_LS",
+    "n_cycles": 83386,
+    "n_signals": 1402,
+    "n_constant_signals": 1029,
+    "big_step_thr_mW": 1.2806,
+    "n_big_steps": 836,
+    "coverage_by_informative_edge(er<0.5)": 0.952,
+    "coverage_by_any_nonclock_edge": 0.952,
+    "mean_abs_dP_mW": 0.5344
+  },
+  {
+    "case": "ISA_THEAD",
+    "n_cycles": 21143,
+    "n_signals": 1402,
+    "n_constant_signals": 910,
+    "big_step_thr_mW": 1.4381,
+    "n_big_steps": 212,
+    "coverage_by_informative_edge(er<0.5)": 0.991,
+    "coverage_by_any_nonclock_edge": 0.991,
+    "mean_abs_dP_mW": 0.5414
+  },
+  {
+    "case": "MMU",
+    "n_cycles": 4233,
+    "n_signals": 1402,
+    "n_constant_signals": 1047,
+    "big_step_thr_mW": 1.2808,
+    "n_big_steps": 43,
+    "coverage_by_informative_edge(er<0.5)": 0.907,
+    "coverage_by_any_nonclock_edge": 0.907,
+    "mean_abs_dP_mW": 0.5295
+  },
+  {
+    "case": "coremark",
+    "n_cycles": 598030,
+    "n_signals": 1402,
+    "n_constant_signals": 851,
+    "big_step_thr_mW": 1.6424,
+    "n_big_steps": 5982,
+    "coverage_by_informative_edge(er<0.5)": 0.686,
+    "coverage_by_any_nonclock_edge": 1.0,
+    "mean_abs_dP_mW": 0.6376
+  },
+  {
+    "case": "conv_softmax",
+    "n_cycles": 1438221,
+    "n_signals": 1402,
+    "n_constant_signals": 875,
+    "big_step_thr_mW": 3.4031,
+    "n_big_steps": 14441,
+    "coverage_by_informative_edge(er<0.5)": 1.0,
+    "coverage_by_any_nonclock_edge": 1.0,
+    "mean_abs_dP_mW": 0.7729
+  }
+]
+--- correlate_toggle_power ---
+module=vidu  cases=['cache', 'conv_softmax', 'coremark', 'csr', 'debug', 'exception', 'interrupt', 'ISA_FP', 'ISA_INT', 'ISA_LS', 'ISA_THEAD', 'MMU']  out=/ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity
+/home/jingbo.jiang/anaconda3/lib/python3.14/site-packages/numpy/lib/_nanfunctions_impl.py:1396: RuntimeWarning: All-NaN slice encountered
+  return _nanquantile_unchecked(
+
+===== cache  (n=8,313) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.191    0.114    0.305    0.098     32
+  maxstep       0.646    0.212    0.751    0.182     64
+  range         0.624    0.163    0.785    0.133     32
+  level         0.616    0.161    0.910    0.141     64
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.646 [maxstep @W=64]  null95=0.212  honest=0.434  p=0.000  (Pearson_max=0.751)
+  LEVEL track: best in-scope |lvl_corr|=0.020 (0 signals >|0.3|, of 94 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_cache.png
+
+===== conv_softmax  (n=1,438,221) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.720    0.336    0.670    0.299      8
+  maxstep       0.726    0.378    0.630    0.308      8
+  range         0.736    0.393    0.627    0.321      8
+  level         0.907    0.356    0.889    0.293      4
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.726 [maxstep @W=8]  null95=0.524  honest=0.202  p=0.000  (Pearson_max=0.986, BURST-concentrated)
+  LEVEL track: best in-scope |lvl_corr|=0.508 (69 signals >|0.3|, of 307 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it, concentrated in high-switching bursts.  BUT an in-scope control/STATE signal tracks the power LEVEL (|lvl_corr|=0.508, 69 signals >|0.3|) → LEARNABLE from LEVEL features, not switching. Add them; see Diagnostic A/C.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_conv_softmax.png
+
+===== coremark  (n=598,030) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.678    0.268    0.887    0.179    512
+  maxstep       0.348    0.095    0.515    0.082     64
+  range         0.277    0.105    0.503    0.082     64
+  level         0.634    0.191    0.816    0.133     16
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.678 [tv @W=512]  null95=0.268  honest=0.410  p=0.000  (Pearson_max=0.887, BURST-concentrated)
+  LEVEL track: best in-scope |lvl_corr|=0.102 (0 signals >|0.3|, of 276 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it, concentrated in high-switching bursts.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_coremark.png
+
+===== csr  (n=2,736) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.251    0.191    0.555    0.160     16
+  maxstep       0.642    0.317    0.750    0.213     16
+  range         0.734    0.328    0.694    0.297     16
+  level         0.498    0.158    0.562    0.157      8
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.642 [maxstep @W=16]  null95=0.317  honest=0.325  p=0.000  (Pearson_max=0.750)
+  LEVEL track: best in-scope |lvl_corr|=0.055 (0 signals >|0.3|, of 106 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_csr.png
+
+===== debug  (n=39,228) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.596    0.270    0.750    0.365    256
+  maxstep       0.778    0.298    0.749    0.320    256
+  range         0.799    0.293    0.528    0.241    256
+  level         0.641    0.268    0.972    0.479    256
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.778 [maxstep @W=256]  null95=0.377  honest=0.401  p=0.000  (Pearson_max=0.868)
+  LEVEL track: best in-scope |lvl_corr|=0.140 (0 signals >|0.3|, of 57 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_debug.png
+
+===== exception  (n=12,169) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.542    0.178    0.797    0.190     64
+  maxstep       0.769    0.139    0.815    0.173     32
+  range         0.789    0.150    0.846    0.191     32
+  level         0.720    0.162    0.970    0.234     64
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.832 [maxstep @W=64]  null95=0.239  honest=0.592  p=0.000  (Pearson_max=0.830)
+  LEVEL track: best in-scope |lvl_corr|=0.090 (0 signals >|0.3|, of 115 tested)
+  >>> VERDICT: LEARNABLE — datapath switching drives power (set model window ≈ 64 cyc).
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_exception.png
+
+===== interrupt  (n=3,563) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.398    0.196    0.583    0.169     16
+  maxstep       0.699    0.264    0.736    0.167     16
+  range         0.767    0.291    0.796    0.155     16
+  level         0.580    0.204    0.847    0.143     16
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.699 [maxstep @W=16]  null95=0.268  honest=0.431  p=0.000  (Pearson_max=0.736)
+  LEVEL track: best in-scope |lvl_corr|=0.080 (0 signals >|0.3|, of 99 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_interrupt.png
+
+===== ISA_FP  (n=71,076) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.853    0.141    0.828    0.133    128
+  maxstep       0.852    0.146    0.751    0.132     64
+  range         0.868    0.137    0.784    0.127     64
+  level         0.960    0.148    0.981    0.146    128
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.853 [tv @W=128]  null95=0.255  honest=0.598  p=0.000  (Pearson_max=0.850)
+  LEVEL track: best in-scope |lvl_corr|=0.271 (0 signals >|0.3|, of 370 tested)
+  >>> VERDICT: LEARNABLE — datapath switching drives power (set model window ≈ 128 cyc).
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_ISA_FP.png
+
+===== ISA_INT  (n=30,030) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.644    0.208    0.730    0.194     64
+  maxstep       0.759    0.180    0.756    0.144     32
+  range         0.872    0.241    0.860    0.254     64
+  level         0.713    0.130    0.929    0.155     16
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.845 [maxstep @W=128]  null95=0.315  honest=0.530  p=0.000  (Pearson_max=0.787)
+  LEVEL track: best in-scope |lvl_corr|=0.066 (0 signals >|0.3|, of 272 tested)
+  >>> VERDICT: LEARNABLE — datapath switching drives power (set model window ≈ 128 cyc).
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_ISA_INT.png
+
+===== ISA_LS  (n=83,386) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.608    0.097    0.663    0.094    128
+  maxstep       0.778    0.121    0.669    0.114    128
+  range         0.875    0.135    0.795    0.125    128
+  level         0.911    0.116    0.977    0.112    128
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.782 [maxstep @W=64]  null95=0.186  honest=0.597  p=0.000  (Pearson_max=0.723)
+  LEVEL track: best in-scope |lvl_corr|=0.056 (0 signals >|0.3|, of 133 tested)
+  >>> VERDICT: LEARNABLE — datapath switching drives power (set model window ≈ 64 cyc).
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_ISA_LS.png
+
+===== ISA_THEAD  (n=21,143) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.567    0.215    0.711    0.215     32
+  maxstep       0.775    0.288    0.715    0.232     32
+  range         0.818    0.300    0.795    0.262     32
+  level         0.705    0.242    0.933    0.259     16
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.839 [maxstep @W=64]  null95=0.569  honest=0.271  p=0.000  (Pearson_max=0.781)
+  LEVEL track: best in-scope |lvl_corr|=0.143 (0 signals >|0.3|, of 216 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_ISA_THEAD.png
+
+===== MMU  (n=4,233) =====
+  target     spearman  sp.null  pearson  pe.null  bestW
+  tv            0.351    0.139    0.412    0.157     32
+  maxstep       0.753    0.275    0.672    0.203     32
+  range         0.767    0.220    0.715    0.197     16
+  level         0.719    0.220    0.927    0.311     32
+  SWITCHING headline (max Spearman over ['tv', 'maxstep']): 0.753 [maxstep @W=32]  null95=0.275  honest=0.477  p=0.000  (Pearson_max=0.672)
+  LEVEL track: best in-scope |lvl_corr|=0.049 (0 signals >|0.3|, of 103 tested)
+  >>> VERDICT: PARTIAL — switching explains some of it.  And no in-scope signal's LEVEL tracks power either → driver likely OFF-CAMERA/noise: widen scope or check the power estimate.
+  wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power_MMU.png
+
+wrote /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/corr_toggle_power.json and .csv
+--- plot_relevance ---
+module=vidu  cases=['cache', 'conv_softmax', 'coremark', 'csr', 'debug', 'exception', 'interrupt', 'ISA_FP', 'ISA_INT', 'ISA_LS', 'ISA_THEAD', 'MMU']  out=/ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity
+cache: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_cache.png
+cache: covered=52 unexplained=654 (92.6%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_cache.png
+conv_softmax: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_conv_softmax.png
+conv_softmax: covered=14441 unexplained=0 (0.0%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_conv_softmax.png
+coremark: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_coremark.png
+coremark: covered=4106 unexplained=1876 (31.4%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_coremark.png
+csr: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_csr.png
+csr: covered=26 unexplained=2 (7.1%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_csr.png
+debug: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_debug.png
+debug: covered=293 unexplained=100 (25.4%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_debug.png
+exception: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_exception.png
+exception: covered=121 unexplained=1 (0.8%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_exception.png
+interrupt: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_interrupt.png
+interrupt: covered=36 unexplained=1 (2.7%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_interrupt.png
+ISA_FP: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_ISA_FP.png
+ISA_FP: covered=711 unexplained=0 (0.0%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_ISA_FP.png
+ISA_INT: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_ISA_INT.png
+ISA_INT: covered=295 unexplained=6 (2.0%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_ISA_INT.png
+ISA_LS: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_ISA_LS.png
+ISA_LS: covered=796 unexplained=40 (4.8%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_ISA_LS.png
+ISA_THEAD: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_ISA_THEAD.png
+ISA_THEAD: covered=210 unexplained=2 (0.9%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_ISA_THEAD.png
+MMU: 0 rare(edge_rate<1e-3)+relevant(|corr|>0.3) signals -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/relevance_MMU.png
+MMU: covered=39 unexplained=4 (9.3%) -> /ic/projects/A513software/jingbo.jiang/OnchipPowerModeling/out/x-opm/vidu_activity/coverage_MMU.png
+
+==== rare-but-relevant control/state signals (n_edges>=10, sorted by |lvl_corr|) ====
+
+-- cache (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+
+-- conv_softmax (rare: edge_rate<1e-3) --
+                                                           signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+                     x_aq_vidu_top/vidu_vpu_vid_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+                      x_aq_vidu_top/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+x_aq_vidu_top/x_aq_vidu_vid_ctrl_fp/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+  x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+       x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_dis_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+ x_aq_vidu_top/x_aq_vidu_vid_dp_fp/vidu_vpu_vid_fp_inst_srcf2_vld       24   0.000017   0.649492 0.840336 -0.016002
+
+-- coremark (rare: edge_rate<1e-3) --
+                                                           signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+  x_aq_vidu_top/x_aq_vidu_vid_ctrl_fp/wbt_ctrl_fp_srcv0_info[2:0]      436   0.000729   0.777393 1.219216 -0.033853
+                        x_aq_vidu_top/wbt_ctrl_fp_srcv0_info[2:0]      436   0.000729   0.777393 1.219216 -0.033853
+                      x_aq_vidu_top/dp_ctrl_dis_fp_inst_srcf1_vld      162   0.000271   0.798760 1.252727 -0.031851
+x_aq_vidu_top/x_aq_vidu_vid_ctrl_fp/dp_ctrl_dis_fp_inst_srcf1_vld      162   0.000271   0.798760 1.252727 -0.031851
+  x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_ctrl_dis_fp_inst_srcf1_vld      162   0.000271   0.798760 1.252727 -0.031851
+                x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_fp_srcf1_vld      162   0.000271   0.798760 1.252727 -0.031851
+
+-- csr (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+
+-- debug (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+
+-- exception (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+
+-- interrupt (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+
+-- ISA_FP (rare: edge_rate<1e-3) --
+                                                                                             signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+                       x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/x_aq_vidu_vid_wbt_entry_reg_12/wb_debug_x       71   0.000999   1.302260 2.289066 -0.111489
+                                               x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/read_data_12[2:0]       71   0.000999   1.486249 2.612475 -0.110991
+                 x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/x_aq_vidu_vid_wbt_entry_reg_12/read_data_y[2:0]       71   0.000999   1.486249 2.612475 -0.110991
+                         x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/vpu_vidu_wbt_bankx_wb1_reg_expand[31:0]       29   0.000408   1.212456 2.131210  0.032113
+x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/x_aq_idu_expand_32_vpu_vidu_wbt_bankx_wb1_reg/x_num_expand[31:0]       29   0.000408   1.212456 2.131210  0.032113
+                    x_aq_vidu_top/x_aq_vidu_vid_gpr_fp/x_aq_vidu_vid_gpr_reg_fp_5/read_data_y[63:0]       26   0.000366   0.773885 1.360306  0.029657
+
+-- ISA_INT (rare: edge_rate<1e-3) --
+                                                     signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+                       x_aq_vidu_top/idu_vidu_ex1_fp_dp_sel       20   0.000666    0.56817 1.053446  0.049745
+                          x_aq_vidu_top/idu_vidu_ex1_fp_sel       20   0.000666    0.56817 1.053446  0.049745
+x_aq_vidu_top/x_aq_vidu_vid_split_fp/idu_vidu_ex1_fp_dp_sel       20   0.000666    0.56817 1.053446  0.049745
+   x_aq_vidu_top/x_aq_vidu_vid_split_fp/idu_vidu_ex1_fp_sel       20   0.000666    0.56817 1.053446  0.049745
+          x_aq_vidu_top/x_aq_vidu_vid_split_fp/non_sm_start       20   0.000666    0.56817 1.053446  0.049745
+ x_aq_vidu_top/x_aq_vidu_vid_ctrl_fp/idu_vidu_ex1_fp_dp_sel       20   0.000666    0.56817 1.053446  0.049745
+
+-- ISA_LS (rare: edge_rate<1e-3) --
+                                                           signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+                     x_aq_vidu_top/vidu_vpu_vid_fp_inst_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+                      x_aq_vidu_top/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+x_aq_vidu_top/x_aq_vidu_vid_ctrl_fp/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+                x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_fp_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+ x_aq_vidu_top/x_aq_vidu_vid_dp_fp/vidu_vpu_vid_fp_inst_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+  x_aq_vidu_top/x_aq_vidu_vid_dp_fp/dp_ctrl_dis_fp_inst_srcf2_vld       24   0.000288   0.738705 1.382245 -0.019263
+
+-- ISA_THEAD (rare: edge_rate<1e-3) --
+                                                                            signal  n_edges  edge_rate  impact_mW     lift  lvl_corr
+      x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/x_aq_vidu_vid_wbt_entry_reg_10/wb_debug_x       17   0.000804   0.866365 1.600357 -0.065743
+                              x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/read_data_10[2:0]       17   0.000804   1.050718 1.940895 -0.058783
+x_aq_vidu_top/x_aq_vidu_vid_wbt_fp/x_aq_vidu_vid_wbt_entry_reg_10/read_data_y[2:0]       17   0.000804   1.050718 1.940895 -0.058783
+                                       x_aq_vidu_top/dp_ctrl_dis_fp_inst_srcf2_vld       18   0.000851   0.530564 0.980063 -0.028699
+                                      x_aq_vidu_top/vidu_vpu_vid_fp_inst_srcf2_vld       18   0.000851   0.530564 0.980063 -0.028699
+                  x_aq_vidu_top/x_aq_vidu_vid_dp_fp/vidu_vpu_vid_fp_inst_srcf2_vld       18   0.000851   0.530564 0.980063 -0.028699
+
+-- MMU (rare: edge_rate<1e-3) --
+Empty DataFrame
+Columns: [signal, n_edges, edge_rate, impact_mW, lift, lvl_corr]
+Index: []
+===== module vidu DONE  Sun Aug 16 12:01:36 PM +08 2026 =====
