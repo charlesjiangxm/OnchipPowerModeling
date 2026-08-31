@@ -28,7 +28,7 @@ The categories are:
 ## Feature Selection. 
 - To mitigate feature redundancy, we performed a correlation-based feature elimination using the Pearson correlation coefficient. Specifically, we calculated the pairwise correlations across all features and identified pairs with an absolute correlation exceeding 0.9. For each highly correlated pair, we evaluated their individual correlations with the target variable, retaining the feature that exhibited a stronger relationship with the target while discarding the redundant one.
 - If features are still a lot, we use MCP.
-- Implements in python called
+- Use @dataset_processed as the train and test dataset. Implements in python called `feature_selection.py` put under @src/xopm_lib
 
 ## Feature Interaction and Model Fitting.
 ### Rules
@@ -36,6 +36,7 @@ The categories are:
 - The input dataset should be @dataset_processed/. Nothing from @dataset shall be used.
 - All function and classes should be implemented in the python file called `model_regression.py` put under @src/xopm_lib
 - The modules `cp0`, `idu`, `ifu`, `iu`, `lsu`, `rtu`, `vidu`, `vpu` are trained seperately. There target (pwr) is stored in `pwr` directory. You should use each modules' corresponding power (column) to train that module. The testing set is `conv_softmax` and `coremark`, others are training set. Note that for `cp0`, `idu`, `ifu`, `iu`, `vidu`, additional training set (random test) are placed under `rand_1cyc_20260830` directories. 
+- Use @dataset_processed as the train and test dataset. 
 
 ### Procedures
 1. Train with RuleFit, with the following constrains: 
