@@ -12,9 +12,11 @@
     - the feature with 0-variance w.r.t. the target.
     - the invariant features, i.e. the features do not flip during the whole benchmark, we cannot determine the amount of power incurred from its toggle if the feature does not toggle.
     - the duplicated features, means the raw signal columns that carry identical values across every training cycle. These are normally physical net dumped at multiple hierarchy depth.
-2. classify all the features with non-zero variance into the 3 categories (a,b,c) based on the signal names (matched on the full hierarchy path, lowercased). When a signal matches more than one categories, apply priority **A > C > D**. The categories are:  
-    a. Control signals: signal name contains `_en` or `_vld` or `_stall` or `_req` or `_busy` or `_idle` or (`clk` and `_en`).  
-    b. Data signals: signal name contains `data`.  
+2. classify all the features with non-zero variance into the 3 categories (a,b,c) based on the signal names (matched on the full hierarchy path, lowercased). When a signal matches more than one categories, apply priority **A > C > D**. When we say the `signal name`, we mean that the strings after the last `/` and before the ending `[*]` (if any). For example column name `x_aq_lsu_top/x_aq_lsu_stb/x_aq_lsu_stb_entry_3/stb_merge_data[49:0]`'s `signal name` is `stb_merge_data`. Also, Do not include signals below `x_aq_spsram_*` modules.
+The categories are:  
+    a. Control signals: signal name contains `_en` or `_vld` or `_stall` or `_busy` or `_idle` or (`clk` and `_en`). They should match the whole world. For example `x_aq_lsu_top/x_aq_lsu_lfb/lfb_entry0_arbus[0]` cannot be count as contain `_en` because that's `entry` not actually enable.
+    b. Data signals: signal name ends with the following pattern: The signal ends with `_*data*`, `_*rdata*`, `_*wdata*`, `_*din*` or `_*dout*` (* can also be empty string), can concatenate with optional surfix including `*raw*`, `*bank*`. The `_*sel*_`, `_*dirty*_`, `_*read*_`, `_*rd*_`, `_*write*_`, `_*wr*` cannot be contained in the signal name.
+        - Clarification (implementation): the leading `_` on the data core is optional, so a bare `data`/`wdata` bus qualifies. Each exclude qualifier (`sel`/`dirty`/`read`/`rd`/`write`/`wr`) is matched only as a whole `_`-delimited field of the leaf name (start/end of the leaf count as field boundaries). Hence `read_data_7` (field `read`) and `dcache_dirty_din` (field `dirty`) are excluded to Config, but `rdata`/`wdata`/`biu_lsu_rdata` stay Data because there `rd`/`wr` are the head of the data core, not a separate field.
     c. Configuration signals: all other signals that are not control or data signals.  
 3. data transformation, perform the following steps. Note: the raw `*_func.pkl.zst` cells are per-cycle signal *states* (not toggles), so toggles are computed explicitly below, per case (no carry across benchmark boundaries).
     - For control signals: If a signal is multi-bit, you should split it into single-bit signal. For example if a signal is x[14:0], you should save x[14], x[13], ... x[0] in total 15 features instead of one feature x[14:0]. 
@@ -23,14 +25,12 @@
 4. Scale all features in the dataset to be between 0 to 1 by dividing the original interger signal value with its maximum value. For example a signal `x[63:0]`'s maximum value is $2^{64}-1$. You should scale x as $x/(2^{64}-1)$. Single-bit features are already 0/1 (max = 1). The `data_toggle_hd` feature is scaled by the bus width $W$ (its maximum possible hamming distance) so it lands in $[0,1]$.
 5. Store the training and testing dataset as pandas dataframe in `.pkl` format. Each case and each type should be stored as a separate .pkl file. All pkl files should be stored under @dataset_processed/, seperately stored to `trainset` and `testset` folder.
 
-
-
 ## Feature Selection. 
-not implemented
+- To mitigate feature redundancy, we performed a correlation-based feature elimination using the Pearson correlation coefficient. Specifically, we calculated the pairwise correlations across all features and identified pairs with an absolute correlation exceeding 0.9. For each highly correlated pair, we evaluated their individual correlations with the target variable, retaining the feature that exhibited a stronger relationship with the target while discarding the redundant one.
+- If features are still a lot, we use MCP.
+- Implements in python called
 
-
-
-
+## Feature Interaction and Model Fitting.
 ### Rules
 - RuleFit's source code can be found in @third_party/rulefit. Feature interaction corresponds to the `rule generation` step of the RuleFit. 
 - The input dataset should be @dataset_processed/. Nothing from @dataset shall be used.
@@ -50,9 +50,6 @@ not implemented
     - After you trained the model and get the final result. Plot the residual map (train, val, test) of the final training result; plot the predict value/true value VS time scatter plot (train, val, test); 
     - Add the predicted power of each module together as the top module (aq_core)'s predicted power. Calculate R^2, MAPE, RMSE against aq_core's true power (@dataset/c906_db_net_1cyc_20260729/pwr), plot a residual plot (train, test) in one figure.
     - Write a `report.md`, include the parameter you used, the dataset you used (dataset name and dimension), the analysis results, and trian/test/val R^2, MAPE, RMSE.
-
-
-
 
 ## Optional steps
 1. [done by human] check the dropped features to see why it is dropped. If the dropped features are supposed to be related to the target, you need to further review your dataset to see if you have omitted some benchmarks so this signal is not toggled.
