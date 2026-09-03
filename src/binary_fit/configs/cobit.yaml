@@ -1,0 +1,90 @@
+# binary_fit — cp0 single-bit dataset (test = {conv_softmax, coremark}).
+# Tree (cobit) fit variant. Paths are relative to the repo root (run_all.sh cd's there).
+#
+# Pipeline: --build_db reads `build.source_db_root/func/<module>/` and writes the
+# single-bit dataset to `build.out_root/func/`; --feature_select and --fit then
+# read `data.func_dir` / `data.pwr_dir` (which point at that materialized dataset).
+
+build:
+  source_db_root: dataset/c906_aq_core_1cyc_20260729   # raw per-cycle signal-state func pkls
+  modules: [aq_core]
+  out_root: dataset/c906_aq_core_singlebit_1cyc_20260901
+  drop_dead_bits: true                                 # drop globally constant-0/constant-1 bits
+
+data:
+  func_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/func   # materialized single-bit features
+  pwr_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/pwr     # pre-populated (Pc(x_aq_core))
+  target: "Pc(x_aq_core)"
+  window_size: 32            # cycles averaged into ONE row before selection + fit
+                             # (features -> per-window bit densities, label -> mean
+                             #  power; 1 = per-cycle. eval knobs count these rows)
+  min_toggle_count: 1        # kept-bit lower floor, counted on the per-cycle bits
+
+split:
+  test_benchmarks: [conv_softmax, coremark]
+  val_fraction: 0.2
+
+selection:                   # Stage 1: proxy selection
+  selector: mcp              # LR-MCP, the prior art this baseline reproduces.
+                             # `fsr` (greedy forward selection) hits target_qs
+                             # exactly and transferred better to the held-out
+                             # benchmarks at equal Q -- override per run with
+                             # `selection.selector=fsr` on the command line.
+  gamma: 3.0                 # LOWER gamma reaches MORE proxies at a converged tol
+                             # (gamma->inf IS Lasso, gamma->1+ is hard
+                             # thresholding). Measured at tol=1e-6, target 1000:
+                             # gamma 1.5/3/10/1000 -> Q 952/1045/983/835.
+                             # The old "raise gamma to reach more" was backwards.
+  tol: 1.0e-6                # NOT skglm's default 1e-4. AndersonCD stops on the
+                             # ABSOLUTE test stop_crit <= tol, and this problem's
+                             # whole gradient scale is bounded by alpha_max
+                             # =1.8e-3 (power in watts), so the default exits
+                             # after ~7 iterations at EVERY alpha and pinned Q at
+                             # 17 for all three targets below.
+  target_qs: [100, 400, 1000]
+    # feature_select records the max-q set for --fit -q to slice
+  dedup_proxies: true        # 80.3% of the kept bits are exact copies of another
+                             # bit (partly hierarchical name aliasing), so an
+                             # undeduplicated Q overstates distinct signals
+  exact_q: true              # cut the |weight|-sorted support to exactly target_q
+  resolve_cold: true         # re-solve the SELECTED alpha from scratch before
+                             # reporting: the descending-alpha sweep warm-starts
+                             # each fit, which is cheap but lands nonconvex MCP on
+                             # a badly non-stationary point (138516 stationarity
+                             # violations warm vs 16 cold, same alpha)
+  kkt_report: true           # log each fit's stationarity residual
+  q_tol: 0.10
+  max_bisect: 12
+  max_rows: 50000
+  grid_points: 30
+  grid_decades: 4.0
+  max_iter: 200              # dead configuration until tol is set: the solver
+                             # self-terminates after ~7 outer iterations
+
+hpo:                         # tree Stage-2 HPO (balanced budget)
+  sampler: nsga3
+  pruner: hyperband
+  prune_mode: truncate
+  n_trials: 64
+  population_size: 32
+  r_rgs: [30, 50, 70]
+  t_th: 800
+
+train:
+  nthread: 0                 # 0 -> all cores (overridden per-process by the driver)
+  base_seed: 0
+
+eval:                        # NB: every window/row knob below counts ROWS, and one
+                             # row is data.window_size cycles (see README)
+  apet: [0.01, 0.03, 0.05]
+  peak_window: 1000          # rows per peak-detection window
+  peak_sigma: 3.0
+  multicycle_windows: [8, 16, 32, 64, 128]
+  trace_plot_cycles: 12000
+  mape_eps_frac: 0.001
+
+runtime:
+  seed: 0
+  allow_tiny: false
+  output_dir: analysis/binary_fit
+  run_name: ""

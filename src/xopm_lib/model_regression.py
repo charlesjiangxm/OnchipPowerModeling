@@ -28,6 +28,8 @@ against the true ``Pc(x_aq_core)`` (the one place raw ``dataset/`` is read).
 CLI (interpreter ~/anaconda3/bin/python):
   python src/xopm_lib/model_regression.py --module cp0 --n-trials 30
   python src/xopm_lib/model_regression.py --all --n-trials 30
+  # restrict the feature universe to chosen signal categories (default: all)
+  python src/xopm_lib/model_regression.py --module cp0 --categories control,data
 """
 
 from __future__ import annotations
@@ -159,13 +161,23 @@ def subset_split(split: Split, mask: np.ndarray) -> Split:
     return Split(split.X[mask], split.y[mask], meta, _slices_from_meta(meta))
 
 
-def _reference_columns(train_dir: str, selected_cols: list[str] | None) -> list[str]:
-    """Canonical feature order (control->data->config) for a module."""
+def _reference_columns(train_dir: str, selected_cols: list[str] | None,
+                       categories: list[str] | None = None) -> list[str]:
+    """Canonical feature order (control->data->config) for a module.
+
+    ``categories`` (a subset of ``control``/``data``/``config``) restricts the feature
+    universe to the chosen signal categories; ``None`` = all categories. When both
+    ``categories`` and ``selected_cols`` (feature-selection output) are given the result
+    is their intersection, still in canonical order.
+    """
     cases = fs.list_cases(train_dir)
     real = [c for c in cases if c != RAND_CASE]
     ref_case = real[0] if real else cases[0]
-    X, _ = fs.load_case(train_dir, ref_case)
-    cols = list(X.columns)
+    if categories is None:
+        X, _ = fs.load_case(train_dir, ref_case)
+        cols = list(X.columns)
+    else:
+        cols = fs.category_columns(train_dir, ref_case, categories)
     if selected_cols is not None:
         sel = set(selected_cols)
         cols = [c for c in cols if c in sel]   # keep canonical order, subset
@@ -213,7 +225,7 @@ def _case_arrays(split_dir: str, case: str, cols: list[str], win_size: int = 1
 def build_splits(module: str, dataset_dir: str = DATASET_PROCESSED,
                  val_fraction: float = 0.2, selected_cols: list[str] | None = None,
                  rand_max_rows: int = DEFAULT_RAND_MAX_ROWS, seed: int = 0,
-                 win_size: int = 1
+                 win_size: int = 1, categories: list[str] | None = None
                  ) -> tuple[dict[str, Split], list[str]]:
     """Assemble train/val/test splits for one module.
 
@@ -221,11 +233,13 @@ def build_splits(module: str, dataset_dir: str = DATASET_PROCESSED,
     convention); the ``random`` augmentation case goes entirely to train (no
     whole-core truth) but is capped at ``rand_max_rows`` rows so it does not swamp
     the pooled training set or the rule-indicator matrix. test = conv_softmax +
-    coremark, pooled. Returns ``({'train','val','test'}: Split, feature_names)``.
+    coremark, pooled. ``categories`` (subset of control/data/config; ``None`` = all)
+    restricts the feature universe to the chosen signal categories. Returns
+    ``({'train','val','test'}: Split, feature_names)``.
     """
     train_dir = os.path.join(dataset_dir, "trainset", module)
     test_dir = os.path.join(dataset_dir, "testset", module)
-    cols = _reference_columns(train_dir, selected_cols)
+    cols = _reference_columns(train_dir, selected_cols, categories)
     rng = np.random.default_rng(seed)
 
     tr_X, tr_y, tr_meta = [], [], []
@@ -574,20 +588,19 @@ def plot_pred_vs_time(split: Split, yhat: np.ndarray, name: str, path: str,
 
 def plot_residual_panels(preds: dict[str, tuple[np.ndarray, np.ndarray]],
                          name: str, path: str) -> None:
-    """3-panel residual map (train/val/test): residual (mW) vs predicted (mW)."""
+    """3-panel parity map (train/val/test): predicted (mW) vs true (mW)."""
     order = [s for s in ("train", "val", "test") if s in preds and len(preds[s][0])]
     fig, axes = plt.subplots(1, len(order), figsize=(5 * len(order), 4.2),
                              squeeze=False)
     for ax, split in zip(axes[0], order):
         y, yh = (np.asarray(a, float) * POWER_SCALE for a in preds[split])
-        resid = y - yh
         idx = _subsample(len(y))
-        ax.scatter(yh[idx], resid[idx], s=2, alpha=0.3, rasterized=True)
-        ax.axhline(0.0, color="r", lw=0.8, ls="--")
-        ax.set_xlabel(f"predicted power ({POWER_UNIT})")
-        ax.set_ylabel(f"residual ({POWER_UNIT})")
-        ax.set_title(f"{split} (n={len(y)})")
-    fig.suptitle(f"Residuals [{name}]")
+        ax.scatter(y[idx], yh[idx], s=2, alpha=0.3, rasterized=True)
+        lo = float(min(y.min(), yh.min())); hi = float(max(y.max(), yh.max()))
+        ax.plot([lo, hi], [lo, hi], color="r", lw=0.8, ls="--")   # y = x
+        ax.set_xlabel(f"true power ({POWER_UNIT})")
+        ax.set_ylabel(f"predicted power ({POWER_UNIT})")
+        ax.set_title(split)
     fig.tight_layout(); fig.savefig(path, dpi=110); plt.close(fig)
 
 
@@ -716,6 +729,31 @@ def write_rule_csv(rf: XGBRuleFit, path: str) -> pd.DataFrame:
     return out
 
 
+def write_coefficients_csv(rf: XGBRuleFit, path: str) -> pd.DataFrame:
+    """Fitted linear-model coefficients + bias, ranked by importance (descending).
+
+    Columns: ``rule`` (feature name for a linear term, conjunction string for a rule),
+    ``type`` ('linear'/'rule', plus a single 'bias' row), ``coefficient`` and
+    ``importance`` -- all in mW (``POWER_SCALE``). Only non-zero-coefficient terms are
+    listed (the features/rules the non-negative Lasso actually kept). The bias (model
+    intercept) is the first row with a blank importance.
+    """
+    got = rf.get_rules(exclude_zero_coef=True, scaled=False)   # coef != 0 only
+    terms = got[["rule", "type", "coef", "importance"]].copy()
+    terms = terms.rename(columns={"coef": "coefficient"})
+    terms["coefficient"] *= POWER_SCALE
+    terms["importance"] *= POWER_SCALE
+    terms = terms.sort_values("importance", ascending=False).reset_index(drop=True)
+
+    bias = float(np.ravel(rf.intercept_)[0]) * POWER_SCALE
+    bias_row = pd.DataFrame([{"rule": "(bias)", "type": "bias",
+                              "coefficient": bias, "importance": np.nan}])
+    out = pd.concat([bias_row, terms], ignore_index=True)
+    out = out[["rule", "type", "coefficient", "importance"]]
+    out.to_csv(path, index=False)
+    return out
+
+
 def write_report(module: str, out_dir: str, cfg: dict, metrics: dict,
                  dims: dict, rule_df: pd.DataFrame) -> None:
     lines = [f"# X-OPM RuleFit report -- module `{module}`", ""]
@@ -733,10 +771,13 @@ def write_report(module: str, out_dir: str, cfg: dict, metrics: dict,
     win_note = ("per-cycle samples, no averaging" if win <= 1
                 else f"each sample = mean of {win} consecutive cycles "
                      "(train/val/test counts are windows)")
+    cats = cfg.get("categories")
+    cats_note = ", ".join(cats) if cats and set(cats) != set(fs.CATEGORIES) else "all"
     lines += ["## Model & parameters", "",
               "- Backend: XGBoost (gbtree + DART dropout) -> RuleFit "
               "(non-negative Lasso/ElasticNet)",
               "- Monotone constraint: +1 on every feature",
+              f"- Signal categories: {cats_note}",
               f"- Window averaging: win_size={win} ({win_note})",
               f"- Penalty: {cfg['penalty']} (positive coefficients only)",
               f"- Gain threshold (rule prune): {cfg['gain_threshold']}",
@@ -754,7 +795,8 @@ def write_report(module: str, out_dir: str, cfg: dict, metrics: dict,
               f"- Rules extracted: {n_rules} (kept {n_kept}, "
               f"dropped {n_rules - n_kept})",
               f"- Linear terms: {int((rule_df['type'] == 'linear').sum())}",
-              "- See `rule.csv` (sorted by gain).", "",
+              "- See `rule.csv` (sorted by gain) and `coefficients.csv` "
+              "(fitted coefficients + bias in mW, ranked by importance).", "",
               "## Figures", "",
               "- `residual_train_val_test.png`",
               "- `pred_vs_time_{train,val,test}.png`",
@@ -775,15 +817,21 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
                use_selection: bool = True, max_rules: int = DEFAULT_MAX_RULES,
                fit_rows: int = DEFAULT_FIT_ROWS, hpo_rows: int = DEFAULT_HPO_ROWS,
                rand_max_rows: int = DEFAULT_RAND_MAX_ROWS,
-               win_size: int = 64) -> dict:
+               win_size: int = 64, categories: list[str] | None = None) -> dict:
     out_dir = os.path.join(ts_dir, module)
     os.makedirs(out_dir, exist_ok=True)
 
     selected = fs.load_selected_columns(module, dataset_dir) if use_selection else None
-    n_pre = len(_reference_columns(os.path.join(dataset_dir, "trainset", module), None))
+    n_pre = len(_reference_columns(os.path.join(dataset_dir, "trainset", module),
+                                   None, categories))
     splits, feat = build_splits(module, dataset_dir, val_fraction, selected,
                                 rand_max_rows=rand_max_rows, seed=seed,
-                                win_size=win_size)
+                                win_size=win_size, categories=categories)
+    if not feat:
+        raise ValueError(
+            f"{module}: no features for categories {categories} "
+            f"(with{'out' if not use_selection else ''} feature selection) -- "
+            "requested categories are absent for this module")
     monotone = "(" + ",".join(["1"] * len(feat)) + ")"
 
     best_params, nbr, study = run_hpo(splits, monotone, n_trials, seed, hpo_rows=hpo_rows)
@@ -809,6 +857,7 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
 
     # ---- artifacts ----
     rule_df = write_rule_csv(rf, os.path.join(out_dir, "rule.csv"))
+    write_coefficients_csv(rf, os.path.join(out_dir, "coefficients.csv"))
     plot_residual_panels(preds, module, os.path.join(out_dir, "residual_train_val_test.png"))
     for s in ("train", "val", "test"):
         plot_pred_vs_time(sp[s], preds[s][1], f"{module} | {s}",
@@ -870,7 +919,8 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
                           if k != "monotone_constraints"},
            "num_boost_round": nbr, "n_trials": n_trials, "penalty": penalty,
            "gain_threshold": gain_threshold, "monotone": "+1 all features",
-           "win_size": win_size}
+           "win_size": win_size,
+           "categories": list(categories) if categories else list(fs.CATEGORIES)}
     write_report(module, out_dir, cfg, metrics, dims, rule_df)
     with open(os.path.join(out_dir, "metrics.json"), "w") as fh:
         json.dump({"module": module, "metrics": metrics, "dims": dims,
@@ -940,19 +990,18 @@ def reconstruct_aqcore(ts_dir: str, modules=MODULES, win_size: int = 1) -> dict:
         sub = merged[merged["split"].isin(
             ("train", "val") if split == "train" else ("test",))]
         if not len(sub):
-            ax.set_title(f"{split} (no data)"); continue
+            ax.set_title(split); continue
         y = sub["aqcore_true"].to_numpy() * POWER_SCALE
         yh = sub["pred_sum"].to_numpy() * POWER_SCALE
         out[split] = metric_block(sub["aqcore_true"].to_numpy(),
                                   sub["pred_sum"].to_numpy())
         idx = _subsample(len(y))
-        ax.scatter(yh[idx], (y - yh)[idx], s=2, alpha=0.3, rasterized=True)
-        ax.axhline(0, color="r", lw=0.8, ls="--")
-        ax.set_xlabel(f"predicted aq_core ({POWER_UNIT})")
-        ax.set_ylabel(f"residual ({POWER_UNIT})")
-        ax.set_title(f"{split}: R2={out[split]['r2']:.3f} "
-                     f"MAPE={out[split]['mape']:.2f}% n={len(y)}")
-    fig.suptitle("aq_core reconstruction (sum of module predictions)")
+        ax.scatter(y[idx], yh[idx], s=2, alpha=0.3, rasterized=True)
+        lo = float(min(y.min(), yh.min())); hi = float(max(y.max(), yh.max()))
+        ax.plot([lo, hi], [lo, hi], color="r", lw=0.8, ls="--")   # y = x
+        ax.set_xlabel(f"true aq_core ({POWER_UNIT})")
+        ax.set_ylabel(f"predicted aq_core ({POWER_UNIT})")
+        ax.set_title(split)
     fig.tight_layout()
     fig.savefig(os.path.join(ts_dir, "aq_core_residual_train_test.png"), dpi=120)
     plt.close(fig)
@@ -1052,11 +1101,33 @@ def main(argv: list[str] | None = None) -> None:
                     help="do not wipe --outdir (for parallel writers sharing one dir)")
     ap.add_argument("--no-selection", action="store_true",
                     help="ignore feature_selection output, use all features")
+    ap.add_argument("--categories", default=None,
+                    help="comma-separated signal categories to train on "
+                         f"({', '.join(fs.CATEGORIES)}; 'configuration' = 'config'); "
+                         "default: all. Intersects with feature selection unless "
+                         "--no-selection is also given")
     ap.add_argument("--no-reconstruct", action="store_true")
     ap.add_argument("--reconstruct-only", action="store_true",
                     help="skip training; aggregate metrics.json in --outdir into the "
                          "aq_core reconstruction + top-level report (parallel driver)")
     args = ap.parse_args(argv)
+
+    categories = None
+    if args.categories:
+        alias = {"configuration": "config"}
+        cats, seen = [], set()
+        for tok in args.categories.split(","):
+            t = alias.get(tok.strip().lower(), tok.strip().lower())
+            if t and t not in seen:
+                seen.add(t); cats.append(t)
+        bad = [c for c in cats if c not in fs.CATEGORIES]
+        if bad:
+            ap.error(f"unknown categor{'ies' if len(bad) > 1 else 'y'} {bad}; "
+                     f"choose from {', '.join(fs.CATEGORIES)} "
+                     "('configuration' is accepted for 'config')")
+        if not cats:
+            ap.error("--categories was given but empty after parsing")
+        categories = cats
 
     if args.reconstruct_only:
         if not args.outdir:
@@ -1091,7 +1162,8 @@ def main(argv: list[str] | None = None) -> None:
                 val_fraction=args.val_fraction, seed=args.seed,
                 use_selection=not args.no_selection, max_rules=args.max_rules,
                 fit_rows=args.fit_rows, hpo_rows=args.hpo_rows,
-                rand_max_rows=args.rand_max_rows, win_size=args.win_size))
+                rand_max_rows=args.rand_max_rows, win_size=args.win_size,
+                categories=categories))
         except Exception as e:                                    # noqa: BLE001
             log.exception("module %s failed: %s", m, e)
 

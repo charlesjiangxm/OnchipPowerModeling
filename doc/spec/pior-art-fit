@@ -1,0 +1,8 @@
+Implement the following methods of the piror arts based on the dataset @dataset/c906_aq_core_1cyc_20260729. The testing set is `conv_softmax` and `coremark`, others are the training set.
+
+You should first run experiments without HPO, then run with HPO. You can use upto 96 cores for training.
+
+Draft one run_all.sh to run cobit and one for running nn, respectively. You should run them after you implement them until fitting is finished.
+
+1. The cobit method. It is already in @src/cobit, but with one update: The cobit is trained based on the binary features, i.e. you need to convert the multi-bit signals (columns) in the training and testing set before you perform the training. The converted dataset should not be stored on disk else it takes too much space. The result should be stored to @analysis/cobit. 
+2. Use a two-layer neural network with a hidden layer of 16 neurons. If HPO is used, the layer dimension can be searched. In their naming, "two-layer" = one hidden layer + one output layer. The input to the NN are all binary (same as cobit). You should use the same feature selection algorithm (MCP) as cobit before the neural network fitting. the source code should be stored to @src/nn . The result should be stored to @analysis/nn

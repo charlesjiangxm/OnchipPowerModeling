@@ -1,0 +1,70 @@
+# binary_fit — cp0 single-bit dataset (test = {conv_softmax, coremark}).
+# NN (MLP) fit variant. Paths are relative to the repo root (run_all.sh cd's there).
+#
+# Pipeline: --build_db reads `build.source_db_root/func/<module>/` and writes the
+# single-bit dataset to `build.out_root/func/`; --feature_select and --fit then
+# read `data.func_dir` / `data.pwr_dir` (which point at that materialized dataset).
+
+build:
+  source_db_root: dataset/c906_aq_core_1cyc_20260729   # raw per-cycle signal-state func pkls
+  modules: [aq_core]
+  out_root: dataset/c906_aq_core_singlebit_1cyc_20260901
+  drop_dead_bits: true                                 # drop globally constant-0/constant-1 bits
+
+data:
+  func_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/func   # materialized single-bit features
+  pwr_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/pwr     # pre-populated (Pc(x_aq_core))
+  target: "Pc(x_aq_core)"
+  window_size: 32            # cycles averaged into ONE row before selection + fit
+                             # (features -> per-window bit densities, label -> mean
+                             #  power; 1 = per-cycle. eval knobs count these rows)
+  min_toggle_count: 1        # kept-bit lower floor, counted on the per-cycle bits
+
+split:
+  test_benchmarks: [conv_softmax, coremark]
+  val_fraction: 0.2
+
+selection:                   # Stage 1: proxy selection (must match cobit.yaml)
+  selector: mcp              # LR-MCP, the prior art this baseline reproduces;
+                             # `selection.selector=fsr` for greedy forward
+                             # selection (exact Q, better held-out transfer)
+  gamma: 3.0                 # LOWER gamma reaches MORE proxies at a converged tol
+                             # (gamma->inf IS Lasso); "raise gamma" was backwards
+  tol: 1.0e-6                # NOT skglm's default 1e-4 -- that absolute tolerance
+                             # exceeds this problem's whole gradient scale
+                             # (alpha_max=1.8e-3) and pinned Q at 17
+  target_qs: [100, 400, 1000]
+    # feature_select records the max-q set for --fit -q to slice
+  dedup_proxies: true
+  exact_q: true
+  resolve_cold: true         # warm-started sweep, cold re-solve of the reported alpha
+  kkt_report: true
+  q_tol: 0.10
+  max_bisect: 12
+  max_rows: 50000
+  grid_points: 30
+  grid_decades: 4.0
+  max_iter: 200              # dead configuration until tol is set
+
+hpo:                         # NN (MLP) Stage-2 HPO
+  nn_n_trials: 40
+  nn_n_jobs: 1
+
+train:
+  nthread: 0                 # 0 -> all cores (overridden per-process by the driver)
+  base_seed: 0
+
+eval:                        # NB: every window/row knob below counts ROWS, and one
+                             # row is data.window_size cycles (see README)
+  apet: [0.01, 0.03, 0.05]
+  peak_window: 1000          # rows per peak-detection window
+  peak_sigma: 3.0
+  multicycle_windows: [8, 16, 32, 64, 128]
+  trace_plot_cycles: 12000
+  mape_eps_frac: 0.001
+
+runtime:
+  seed: 0
+  allow_tiny: false
+  output_dir: analysis/binary_fit
+  run_name: ""

@@ -1,5 +1,6 @@
 # Ignore the contents of the _site directory
 _site/
+dataset_processed/
 
 # Ignore the directory for local files during development
 local/

@@ -79,6 +79,31 @@ def load_case(split_dir: str, case: str) -> tuple[pd.DataFrame, pd.Series]:
     return X, y
 
 
+def category_columns(split_dir: str, case: str,
+                     categories: list[str]) -> list[str]:
+    """Feature-column names belonging to ``categories`` for one case.
+
+    Returned in the canonical ``control -> data -> config`` order (matching
+    ``load_case``'s concat order), reading only the requested per-category pickle(s).
+    A category whose file is absent (the module has no feature of that category --
+    ``data_preprocess`` skips empty categories) is silently skipped, so an empty list
+    means none of the requested categories exist for this case.
+    """
+    wanted = set(categories)
+    unknown = wanted - set(CATEGORIES)
+    if unknown:
+        raise ValueError(f"unknown categor{'ies' if len(unknown) > 1 else 'y'} "
+                         f"{sorted(unknown)}; valid: {list(CATEGORIES)}")
+    cols: list[str] = []
+    for cat in CATEGORIES:                     # canonical order
+        if cat not in wanted:
+            continue
+        path = os.path.join(split_dir, f"{case}_{cat}.pkl.zst")
+        if os.path.exists(path):
+            cols.extend(pd.read_pickle(path).columns)
+    return cols
+
+
 def load_module_train(module: str, dataset_dir: str = DATASET_PROCESSED
                       ) -> tuple[pd.DataFrame, pd.Series]:
     """Pool every training case (real benchmarks + ``random`` where present)."""

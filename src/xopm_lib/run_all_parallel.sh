@@ -18,7 +18,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO"
 
 MODULES=(cp0 idu ifu iu lsu rtu vidu vpu)
-WINS=(8 32 64 128)
+WINS=(1 8 32 64 128)
 TS="${OUTDIR:-analysis/x-opm/$(date +%Y-%m-%d-%H-%M)}"
 rm -rf "$TS"; mkdir -p "$TS"
 
