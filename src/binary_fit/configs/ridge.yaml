@@ -1,9 +1,15 @@
 # binary_fit — cp0 single-bit dataset (test = {conv_softmax, coremark}).
-# NN (MLP) fit variant. Paths are relative to the repo root (run_all.sh cd's there).
+# Ridge (L2-penalized linear) fit variant. Paths are relative to the repo root.
 #
 # Pipeline: --build_db reads `build.source_db_root/func/<module>/` and writes the
 # single-bit dataset to `build.out_root/func/`; --feature_select and --fit then
 # read `data.func_dir` / `data.pwr_dir` (which point at that materialized dataset).
+#
+# This backend is the linear reference point for `tree` and `nn`: how much of the
+# power is a weighted sum of the selected proxy bits, with per-bit watts to show
+# for it (`ridge_coefficients.csv`). Note there is no `hpo:` block — alpha comes
+# from RidgeCV's leave-one-out generalized CV over the fitting rows, not from an
+# optuna study on the validation tail, so its knobs live under `ridge:` below.
 
 build:
   source_db_root: dataset/c906_aq_core_1cyc_20260729   # raw per-cycle signal-state func pkls
@@ -22,7 +28,8 @@ data:
 
 split:
   test_benchmarks: [conv_softmax, coremark]
-  val_fraction: 0.2
+  val_fraction: 0.2          # ridge is the one backend that also runs at 0.0:
+                             # its alpha search never touches the val split
 
 selection:                   # Stage 1: proxy selection (must match cobit.yaml)
   selector: mcp              # LR-MCP, the prior art this baseline reproduces;
@@ -46,12 +53,34 @@ selection:                   # Stage 1: proxy selection (must match cobit.yaml)
   grid_decades: 4.0
   max_iter: 200              # dead configuration until tol is set
 
-hpo:                         # NN (MLP) Stage-2 HPO
-  nn_n_trials: 40
-  nn_n_jobs: 1
+ridge:                       # Stage-2 ridge: the RidgeCV alpha grid and row cap
+  alpha_rel_max: 100.0       # top of the descending log grid, PER FITTING ROW.
+                             # sklearn minimizes a SUM and train-standardizing
+                             # makes diag(Z'Z)=n exactly, so a unit-variance
+                             # direction is shrunk by 1/(1+alpha_rel): 1e2 ->
+                             # 0.0099, 1e-6 -> 0.999999. One relative number means
+                             # the same regularization at every n; a fixed
+                             # ABSOLUTE grid does not (a 1e4 ceiling shrinks to
+                             # 0.013 at n=135 but only 0.95 at n=200000).
+                             # NB: plain YAML needs a SIGNED exponent (1.0e+2) --
+                             # an unsigned 1.0e2 parses as a string, which
+                             # validate() rejects with a message saying so
+  grid_decades: 8.0          # grid spans alpha_rel_max * 10**-decades -> 1e-6.
+                             # The floor stays off 0 on purpose: 80.3% of the
+                             # aq_core kept bits are exact copies of another bit,
+                             # so X'X is rank-deficient and an unregularized solve
+                             # blows up (max|coef| 6.8e4 at alpha=0 vs 1.5 at 1e-8)
+  grid_points: 25
+  max_rows: 200000           # seeded row cap for the fit (0 -> all rows). Two costs
+                             # scale with rows: the float64 standardized design is
+                             # n_rows x Q x 8 bytes (160 MB here, 16 GB at the
+                             # window_size=1 x Q=1000 corner), and RidgeCV's "cov"
+                             # GCV path redoes an n x Q matmul once PER alpha.
+                             # Never fires at window_size: 32 (aq_core: 8616 rows)
+  fit_intercept: true
 
 train:
-  nthread: 0                 # 0 -> all cores (overridden per-process by the driver)
+  nthread: 0                 # 0 -> all cores (unused by ridge; kept for parity)
   base_seed: 0
 
 eval:                        # NB: every window/row knob below counts ROWS, and one

@@ -15,7 +15,7 @@ data:
   func_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/func   # materialized single-bit features
   pwr_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/pwr     # pre-populated (Pc(x_aq_core))
   target: "Pc(x_aq_core)"
-  window_size: 32            # cycles averaged into ONE row before selection + fit
+  window_size: 4             # cycles averaged into ONE row before selection + fit
                              # (features -> per-window bit densities, label -> mean
                              #  power; 1 = per-cycle. eval knobs count these rows)
   min_toggle_count: 1        # kept-bit lower floor, counted on the per-cycle bits
@@ -41,7 +41,7 @@ selection:                   # Stage 1: proxy selection
                              # =1.8e-3 (power in watts), so the default exits
                              # after ~7 iterations at EVERY alpha and pinned Q at
                              # 17 for all three targets below.
-  target_qs: [100, 400, 1000]
+  target_qs: [50]
     # feature_select records the max-q set for --fit -q to slice
   dedup_proxies: true        # 80.3% of the kept bits are exact copies of another
                              # bit (partly hierarchical name aliasing), so an
@@ -77,10 +77,9 @@ train:
 eval:                        # NB: every window/row knob below counts ROWS, and one
                              # row is data.window_size cycles (see README)
   apet: [0.01, 0.03, 0.05]
-  peak_window: 1000          # rows per peak-detection window
+  peak_window: 100           # rows per peak-detection window
   peak_sigma: 3.0
   multicycle_windows: [8, 16, 32, 64, 128]
-  trace_plot_cycles: 12000
   mape_eps_frac: 0.001
 
 runtime:

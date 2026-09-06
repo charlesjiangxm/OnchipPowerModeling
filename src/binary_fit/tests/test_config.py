@@ -60,8 +60,10 @@ def test_unknown_key_rejected(tmp_path):
 
 
 def test_removed_keys_are_rejected(tmp_path):
-    # multi-bit / disk-cache knobs no longer exist
-    for bad in ({"data": {"bit_expand": True}}, {"data": {"db_root": "x"}}):
+    # multi-bit / disk-cache knobs no longer exist, nor does the trace row cap
+    # (figures are never decimated now, so there is nothing left to configure)
+    for bad in ({"data": {"bit_expand": True}}, {"data": {"db_root": "x"}},
+                {"eval": {"trace_plot_cycles": 12000}}):
         with pytest.raises(KeyError):
             Config.from_yaml(_write_cfg(tmp_path, bad))
 
@@ -84,3 +86,52 @@ def test_study_stamp_tracks_proxies_and_config(tmp_path):
     assert study_stamp(cfg, np.array([1, 2, 4])) != s0
     cfg.split.val_fraction = 0.3
     assert study_stamp(cfg, np.array([1, 2, 3])) != s0
+
+
+# --------------------------------------------------------------------------- #
+# ridge section
+# --------------------------------------------------------------------------- #
+def test_ridge_section_loads_and_guards_its_grid(tmp_path):
+    cfg = Config.from_yaml(_write_cfg(tmp_path))
+    assert (cfg.ridge.alpha_rel_max, cfg.ridge.grid_points) == (1e2, 25)
+    assert Config.from_yaml(
+        _write_cfg(tmp_path, {"ridge": {"grid_points": 8, "max_rows": 0}})
+    ).ridge.grid_points == 8
+    for bad in ({"grid_points": 0}, {"alpha_rel_max": 0.0}, {"grid_decades": -1.0},
+                {"max_rows": -1}):
+        with pytest.raises(ValueError):
+            Config.from_yaml(_write_cfg(tmp_path, {"ridge": bad}))
+
+
+def test_ridge_alpha_rel_max_rejects_an_unsigned_yaml_exponent(tmp_path):
+    """`alpha_rel_max: 1.0e4` is a STRING in plain YAML (the exponent needs a sign).
+
+    Caught at load time with a message that says so, rather than surfacing much
+    later as a TypeError from inside numpy.
+    """
+    p = tmp_path / "c.yaml"
+    p.write_text("ridge:\n  alpha_rel_max: 1.0e4\n")
+    with pytest.raises(ValueError, match="needs a sign"):
+        Config.from_yaml(p)
+    p.write_text("ridge:\n  alpha_rel_max: 1.0e+4\n")
+    assert Config.from_yaml(p).ridge.alpha_rel_max == 1e4
+
+
+def test_ridge_knobs_do_not_move_the_study_stamp(tmp_path):
+    """Why the ridge knobs are NOT in HpoConfig.
+
+    study_stamp hashes the whole `hpo` section into every tree study name, so
+    adding fields there would rename the studies and orphan the trials already in
+    an existing analysis/.../optuna.db. Do not "tidy" them into `hpo`.
+    """
+    from binary_fit.hpo import study_stamp
+
+    cfg = Config.from_yaml(_write_cfg(tmp_path))
+    ids = np.array([1, 2, 3])
+    s0 = study_stamp(cfg, ids)
+    cfg.ridge.alpha_rel_max = 1.0
+    cfg.ridge.grid_points = 3
+    cfg.ridge.max_rows = 0
+    assert study_stamp(cfg, ids) == s0
+    cfg.hpo.n_trials += 1  # a real hpo knob still does move it
+    assert study_stamp(cfg, ids) != s0

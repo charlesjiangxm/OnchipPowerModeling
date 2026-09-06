@@ -125,6 +125,41 @@ class HpoConfig:
 
 
 @dataclass
+class RidgeConfig:
+    # Stage-2 ridge backend (--model ridge). Its L2 strength is chosen by
+    # RidgeCV's leave-one-out generalized CV *inside the fitting rows*, not by an
+    # optuna study on the validation tail -- so these are not HPO sampler knobs
+    # and deliberately do NOT live in HpoConfig. Two reasons: they would be
+    # misfiled there, and hpo.study_stamp() hashes the whole `hpo` section into
+    # every tree study name, so adding fields to it silently orphans the trials
+    # already in an existing analysis/.../optuna.db.
+    # Grid bounds are ROW-RELATIVE (multiplied by the fitting row count in
+    # models.ridge_alphas): sklearn minimizes a SUM, and train-standardizing makes
+    # diag(Z'Z) = n exactly, so a unit-variance direction is shrunk by
+    # 1/(1 + alpha_rel). alpha_rel 1e2 -> shrink to 0.0099, 1e-6 -> 0.999999, so
+    # the default grid spans "almost fully shrunk" to "effectively OLS" at ANY n.
+    # A fixed ABSOLUTE grid cannot: topping out at 1e4 it shrinks to 0.013 at
+    # n=135 but only to 0.95 at n=200_000.
+    alpha_rel_max: float = 1e2  # top of the log grid, per fitting row
+    grid_decades: float = 8.0  # spans alpha_rel_max * 10**-decades -> 1e-6 floor
+    grid_points: int = 25
+    # The grid floor is bounded away from zero on purpose. 80.3% of the aq_core
+    # kept bits are exact copies of another bit (see the README), so X'X is
+    # genuinely rank-deficient and the L2 term is what makes the solve well-posed:
+    # measured on duplicated columns, alpha=0 returns max|coef| = 6.8e4 where
+    # alpha=1e-8 returns 1.5.
+    #
+    # Seeded row cap for the ridge fit (0 -> every row). RidgeCV's GCV path takes
+    # an SVD of the design matrix whose U factor is n_rows x Q float64: 200k x 100
+    # is 160 MB, but the window_size=1 x Q=1000 corner would be 16 GB. A linear
+    # model with Q <= 1000 is fully determined by a 200k-row sample, and at the
+    # default window_size=32 the cap never fires on aq_core (measured: 6895
+    # train + 1721 val = 8616 fitting rows).
+    max_rows: int = 200_000
+    fit_intercept: bool = True
+
+
+@dataclass
 class TrainConfig:
     nthread: int = 0  # 0 -> xgboost default (all cores)
     base_seed: int = 0
@@ -136,7 +171,6 @@ class EvalConfig:
     peak_window: int = 1000  # cycles per peak-detection window
     peak_sigma: float = 3.0
     multicycle_windows: list[int] = field(default_factory=lambda: [8, 16, 32, 64, 128])
-    trace_plot_cycles: int = 12000
     mape_eps_frac: float = 1e-3  # cycles with y <= eps_frac*median(y) are MAPE-masked
 
 
@@ -155,6 +189,7 @@ class Config:
     split: SplitConfig = field(default_factory=SplitConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     hpo: HpoConfig = field(default_factory=HpoConfig)
+    ridge: RidgeConfig = field(default_factory=RidgeConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -181,6 +216,26 @@ class Config:
         # reject rather than coerce: a float 32.5 would silently floor to 32
         if isinstance(w, bool) or not isinstance(w, int) or w < 1:
             raise ValueError(f"data.window_size must be an integer >= 1 cycle, got {w!r}")
+        # A degenerate ridge grid otherwise surfaces from inside sklearn as
+        # "Found array with 0 sample(s)", which says nothing about the real cause.
+        # The type check is not pedantry: plain YAML needs a SIGNED exponent, so
+        # `alpha_rel_max: 1.0e2` loads as the *string* "1.0e2" and would otherwise
+        # only fail much later, as a TypeError from numpy.
+        r = self.ridge
+        grid = {"ridge.alpha_rel_max": r.alpha_rel_max, "ridge.grid_decades": r.grid_decades,
+                "ridge.grid_points": r.grid_points, "ridge.max_rows": r.max_rows}
+        for key, value in grid.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{key} must be a number, got {value!r} "
+                                 f"(a YAML exponent needs a sign: 1.0e+4, not 1.0e4)")
+        if not (r.alpha_rel_max > 0 and r.grid_decades >= 0 and r.grid_points >= 1
+                and r.max_rows >= 0):
+            raise ValueError(
+                f"ridge grid must have alpha_rel_max > 0, grid_decades >= 0, "
+                f"grid_points >= 1 and max_rows >= 0, got alpha_rel_max={r.alpha_rel_max!r} "
+                f"grid_decades={r.grid_decades!r} grid_points={r.grid_points!r} "
+                f"max_rows={r.max_rows!r}"
+            )
 
     # -- serialization / hashing -------------------------------------------
     def to_dict(self) -> dict:
@@ -225,6 +280,7 @@ _SECTION_TYPES = {
     ("Config", "split"): SplitConfig,
     ("Config", "selection"): SelectionConfig,
     ("Config", "hpo"): HpoConfig,
+    ("Config", "ridge"): RidgeConfig,
     ("Config", "train"): TrainConfig,
     ("Config", "eval"): EvalConfig,
     ("Config", "runtime"): RuntimeConfig,

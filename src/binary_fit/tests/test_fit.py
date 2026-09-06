@@ -1,7 +1,9 @@
 import logging
 
 import numpy as np
+import pytest
 
+from binary_fit import run
 from binary_fit.config import Config
 from binary_fit.run import _build_selections, _warn_window_mismatch
 
@@ -68,3 +70,97 @@ def test_window_mismatch_never_fails_the_fit(tmp_path, caplog):
         msgs = _warn_for(tmp_path, bad, 32, caplog)
         assert len(msgs) == 1
         assert "skipping" in msgs[0] or "cannot read" in msgs[0]
+
+
+# --------------------------------------------------------------------------- #
+# --model surface
+# --------------------------------------------------------------------------- #
+def _main_kinds(tmp_path, monkeypatch, *argv):
+    """Run main() with cmd_fit stubbed; return the model_kinds it was handed."""
+    seen = {}
+    monkeypatch.setattr(run, "cmd_fit",
+                        lambda cfg, outdir, proxies, qs, kinds, use_hpo:
+                        seen.update(kinds=kinds, use_hpo=use_hpo) or 0)
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("{}")
+    (tmp_path / "proxies.csv").write_text("rank,name,col_id,mcp_weight\n")
+    run.main(["--fit", "--config", str(cfg), "--outdir", str(tmp_path), *argv])
+    return seen
+
+
+def test_model_both_now_expands_to_every_kind(tmp_path, monkeypatch):
+    """`both` meant tree+nn when there were two backends; it means ALL of them.
+
+    Pinned because it is the one behaviour change the ridge backend made to an
+    existing command line.
+    """
+    seen = _main_kinds(tmp_path, monkeypatch, "--model", "both", "--no-hpo")
+    assert seen["kinds"] == list(run.MODEL_KINDS) == ["tree", "nn", "ridge"]
+    assert seen["use_hpo"] is False
+
+
+def test_model_selects_a_single_kind(tmp_path, monkeypatch):
+    for kind in run.MODEL_KINDS:
+        seen = _main_kinds(tmp_path, monkeypatch, "--model", kind)
+        assert seen["kinds"] == [kind] and seen["use_hpo"] is True
+    assert _main_kinds(tmp_path, monkeypatch)["kinds"] == ["tree"]  # the default
+
+
+# --------------------------------------------------------------------------- #
+# ridge backend wiring
+# --------------------------------------------------------------------------- #
+def test_cap_ridge_rows_is_seeded_and_only_fires_above_the_cap():
+    """Row-aligned, reproducible, and a no-op unless the cap actually bites."""
+    cfg = Config()
+    X = np.arange(200, dtype=np.float32).reshape(100, 2)  # row i = [2i, 2i+1]
+    y = np.arange(100.0)
+
+    cfg.ridge.max_rows = 0
+    assert run._cap_ridge_rows(cfg, X, y)[0] is X  # 0 means every row
+    cfg.ridge.max_rows = 500
+    assert run._cap_ridge_rows(cfg, X, y)[0] is X  # cap above n: untouched
+
+    cfg.ridge.max_rows = 20
+    Xa, ya = run._cap_ridge_rows(cfg, X, y)
+    Xb, yb = run._cap_ridge_rows(cfg, X, y)
+    assert Xa.shape == (20, 2) and ya.shape == (20,)
+    assert np.array_equal(Xa, Xb) and np.array_equal(ya, yb)  # seeded
+    assert np.array_equal(Xa[:, 0], ya * 2)  # X and y still describe the same rows
+    assert np.all(np.diff(ya) > 0)  # sorted, so benchmark order is preserved
+
+
+@pytest.mark.parametrize("use_hpo,with_val,expected_rows",
+                         [(True, True, 50), (False, True, 40), (True, False, 40)])
+def test_fit_ridge_row_set_depends_on_hpo(tmp_path, use_hpo, with_val, expected_rows):
+    """With HPO the val split JOINS the fit; with --no-hpo ridge fits train only.
+
+    Ridge's alpha search never scores val (RidgeCV's GCV runs inside the rows it
+    is handed), so under HPO train+val go in as one set -- the same data the tree
+    and nn backends refit on -- which is what makes _run_one's "in HPO refit"
+    captions correct. Under --no-hpo it fits train only, like the other two, so
+    the "in-sample"/held-out captions stay honest there too. The third case is
+    split.val_fraction = 0, where ridge must still complete.
+    """
+    cfg = Config()
+    rng = np.random.default_rng(0)
+    w = np.array([1.0, 2.0, 3.0])
+    Xtr = rng.random((40, 3)).astype(np.float32)
+    ytr = Xtr @ w + 0.1
+    if with_val:
+        Xval = rng.random((10, 3)).astype(np.float32)
+        yval = Xval @ w + 0.1
+    else:
+        Xval, yval = None, np.empty(0)
+
+    qdir = tmp_path / "q"
+    qdir.mkdir()
+    best, imp, leaves, predict_fn = run._fit_ridge(
+        cfg, qdir, Xtr, ytr, Xval, yval, ["a", "b", "c"], np.array([0, 1, 2]), use_hpo)
+
+    assert best["n_fit_rows"] == expected_rows
+    assert best["val_r2"] is None and leaves == ""  # nothing here scored val
+    assert (best["gcv_neg_mse"] is None) is (not use_hpo)
+    assert imp.shape == (3,) and np.all(imp >= 0)
+    assert sorted(p.name for p in qdir.iterdir()) == ["model.joblib",
+                                                      "ridge_coefficients.csv"]
+    assert predict_fn(Xtr).shape == (40,)

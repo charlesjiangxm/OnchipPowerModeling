@@ -145,6 +145,7 @@ def load_proxies_csv(path: Path):
 
 
 COEF_CSV_HEADER = ["rank", "name", "col_id", "value", "importance"]
+RIDGE_COEF_CSV_HEADER = ["rank", "name", "col_id", "coef_std", "coef_watts"]
 
 
 def save_coefficients_csv(path: Path, names, col_ids, values, importances) -> None:
@@ -177,4 +178,40 @@ def save_coefficients_csv(path: Path, names, col_ids, values, importances) -> No
     for rank, j in enumerate(order, start=1):
         writer.writerow([rank, names[j], int(col_ids[j]),
                          f"{values[j]:.8g}", f"{imp_norm[j]:.8g}"])
+    atomic_write_text(Path(path), buf.getvalue())
+
+
+def save_ridge_coefficients_csv(path: Path, names, col_ids, coef_std, coef_watts) -> None:
+    """Dump the ridge backend's SIGNED coefficients, ranked by ``|coef_std|`` desc.
+
+    A separate file rather than a column of ``coefficients.csv``: that table is
+    shared by all three backends and its ``value`` column is documented as the
+    Stage-1 LR-MCP weight of the proxy, so a fitted linear coefficient has
+    nowhere to live there (and its ``importance`` column must stay non-negative).
+
+    ``coef_std`` is the coefficient in standardized space -- dimensionless, and
+    the one that is comparable across bits. ``coef_watts`` is the same fit in the
+    target's own units: watts per unit of that feature, which at
+    ``data.window_size = 1`` is watts per assertion of the bit. The matching
+    ``intercept_watts`` is recorded in ``result.json`` under ``best``, because a
+    single scalar in a per-feature table would have to be a fake row.
+    """
+    import numpy as np
+
+    names = list(names)
+    col_ids = np.asarray(col_ids).ravel()
+    std = np.asarray(coef_std, dtype=float).ravel()
+    watts = np.asarray(coef_watts, dtype=float).ravel()
+    if not (len(names) == col_ids.size == std.size == watts.size):
+        raise ValueError(
+            f"ridge coefficient table length mismatch: names={len(names)} "
+            f"col_ids={col_ids.size} coef_std={std.size} coef_watts={watts.size}"
+        )
+    order = sorted(range(len(names)), key=lambda j: -abs(std[j]))
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(RIDGE_COEF_CSV_HEADER)
+    for rank, j in enumerate(order, start=1):
+        writer.writerow([rank, names[j], int(col_ids[j]),
+                         f"{std[j]:.8g}", f"{watts[j]:.8g}"])
     atomic_write_text(Path(path), buf.getvalue())

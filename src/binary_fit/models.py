@@ -12,12 +12,21 @@ Both consume the same binary MCP-selected proxies and are directly comparable.
 * ``nn`` -- ``sklearn.MLPRegressor(hidden_layer_sizes=(h,))`` ("two-layer" =
   one hidden + one output layer) with feature/target standardization; metrics
   are reported in the original power (W) scale.
+* ``ridge`` -- L2-penalized linear regression, the linear reference point for
+  the other two: it answers how much of the power is a weighted sum of the
+  selected proxy bits, and its coefficients are per-bit watts. Ridge rather
+  than OLS because the proxy set is strongly collinear (80.3% of the aq_core
+  kept bits are exact copies of another bit), so ``X'X`` is rank-deficient and
+  the penalty is what makes the solve well-posed at all. Alpha comes from
+  ``RidgeCV``'s leave-one-out generalized CV over the fitting rows, not from an
+  optuna study on the validation tail -- see :func:`fit_ridge_scaled`.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import xgboost as xgb
+from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
@@ -213,3 +222,112 @@ def nn_importance(model: MLPRegressor) -> np.ndarray:
     for w in model.coefs_[1:]:
         prod = prod @ np.abs(np.asarray(w, dtype=np.float64))
     return prod.sum(axis=1)
+
+
+# =========================================================================== #
+# ridge backend (L2-penalized linear)
+# =========================================================================== #
+# --no-hpo: mid-grid. ROW-RELATIVE, like the grid -- see ridge_alphas.
+NOHPO_RIDGE_ALPHA_REL = 1e-2
+
+
+def ridge_alphas(alpha_rel_max: float, decades: float, points: int, n_rows: int) -> np.ndarray:
+    """Descending log-spaced grid of ABSOLUTE alphas from a ROW-RELATIVE spec.
+
+    Configured relative to the row count and multiplied up here, because sklearn
+    minimizes a *sum* of squared residuals, not a mean: ``alpha`` competes with
+    ``||Zw||^2``, which grows with n. Standardizing on the training rows makes
+    that exact -- ``diag(Z'Z) = n`` to 5e-15 (a zero-variance column gets
+    ``scale_ = 1.0`` and contributes 0) -- so a unit-variance direction is
+    shrunk by ``n / (n + alpha) = 1 / (1 + alpha_rel)``. One relative number
+    therefore means the same amount of regularization at every n, and a fixed
+    absolute one does not: an absolute grid topping out at 1e4 shrinks to 0.013
+    at n=135 but only to 0.95 at n=200_000, i.e. its *heaviest* point is nearly
+    unregularized exactly where the design is largest and most rank-deficient.
+    Verified by row replication: tiling the rows 4x moves an absolute-alpha
+    solution by 1.3e-3 and a row-relative one by 2.1e-15.
+
+    Descending, matching the Stage-1 alpha sweep (``selection.select_proxies``).
+    The floor stays bounded away from zero for the reason the penalty exists at
+    all: duplicate proxy bits make ``X'X`` singular, and an unregularized solve
+    on them returns coefficients four orders of magnitude too large.
+    """
+    grid = np.logspace(0.0, -float(decades), int(points))
+    return float(alpha_rel_max) * float(n_rows) * grid
+
+
+def fit_ridge_scaled(X_tr, y_tr, alphas=None, alpha=None, fit_intercept: bool = True):
+    """Fit standardizers on train, then ``RidgeCV(alphas)`` or ``Ridge(alpha)``.
+
+    Returns ``(model, xs, ys)`` -- the same triple as :func:`fit_scaled`, so
+    :func:`predict` is reused verbatim and ``run._fit_ridge`` persists the same
+    ``model.joblib`` payload as the nn backend. Exactly one of ``alphas`` (search)
+    or ``alpha`` (fixed) must be given.
+
+    Both X and y are standardized, which is the *opposite* of the Stage-1 choice
+    documented in ``selection.py`` ("standardizing would destroy sparsity and the
+    toggle semantics"). That argument is about a sparse L1 selector over a sparse
+    0/1 matrix; this is a dense L2 fit whose penalty is scale-dependent, so
+    without standardization alpha would mean something different per feature and
+    the coefficients would not be comparable across bits. Standardizing y as well
+    makes the grid dimensionless -- alpha does not have to be re-tuned when the
+    target changes physical scale -- and :func:`predict` inverse-transforms back
+    to watts, so every reported metric stays in the original power scale.
+
+    The solve runs in float64. sklearn preserves its input dtype and
+    ``Union.slice`` hands over float32; factorizing a rank-deficient design in
+    float32 (an SVD on the RidgeCV path, a Cholesky on the fixed-alpha one) is
+    not something to rest a published coefficient table on.
+    """
+    if (alphas is None) == (alpha is None):
+        raise ValueError("fit_ridge_scaled needs exactly one of alphas= (a RidgeCV "
+                         "grid) or alpha= (a fixed L2 strength)")
+    y_tr = np.asarray(y_tr, dtype=np.float64).reshape(-1, 1)
+    xs = StandardScaler().fit(X_tr)
+    ys = StandardScaler().fit(y_tr)
+    Z = np.asarray(xs.transform(X_tr), dtype=np.float64)
+    z = ys.transform(y_tr).ravel()
+    if alphas is not None:
+        # scoring=None selects the efficient leave-one-out generalized-CV path
+        model = RidgeCV(alphas=np.asarray(alphas, dtype=np.float64),
+                        fit_intercept=fit_intercept, scoring=None)
+    else:
+        model = Ridge(alpha=float(alpha), fit_intercept=fit_intercept)
+    model.fit(Z, z)
+    return model, xs, ys
+
+
+def ridge_importance(model) -> np.ndarray:
+    """Per-input ``|coef_|`` on the standardized scale (magnitude-only).
+
+    The direct analogue of :func:`nn_importance`, and non-negative for the same
+    reason: ``utils.save_coefficients_csv`` normalizes ``importances`` to sum to 1
+    and ranks by them descending, both of which a signed vector would corrupt.
+    Inputs are standardized before fitting, so magnitudes are comparable across
+    features; the signed values go to ``ridge_coefficients.csv``.
+    """
+    return np.abs(np.asarray(model.coef_, dtype=np.float64)).ravel()
+
+
+def ridge_coefficients(model, xs: StandardScaler, ys: StandardScaler):
+    """The fit un-scaled: ``(coef_std, coef_watts, intercept_watts)``.
+
+    :func:`fit_ridge_scaled` solves in standardized space, so ``model.coef_`` is
+    watts-free. Since the prediction :func:`predict` computes is
+
+        y = ys.mean_ + ys.scale_ * (b + sum_j w_j (x_j - xs.mean_[j]) / xs.scale_[j])
+
+    the same line in the original units has slope ``w_j * ys.scale_ /
+    xs.scale_[j]`` -- watts per unit of that feature, i.e. per toggle of the bit
+    at ``window_size = 1`` and per unit of window density above it -- and
+    intercept ``ys.mean_ + ys.scale_ * b - sum_j coef_watts[j] * xs.mean_[j]``.
+    ``coef_std`` stays alongside because it is the cross-feature-comparable one.
+    """
+    w = np.asarray(model.coef_, dtype=np.float64).ravel()
+    b = float(np.asarray(model.intercept_).ravel()[0]) if np.size(model.intercept_) else 0.0
+    y_mean, y_scale = float(ys.mean_[0]), float(ys.scale_[0])
+    x_mean = np.asarray(xs.mean_, dtype=np.float64).ravel()
+    x_scale = np.asarray(xs.scale_, dtype=np.float64).ravel()
+    coef_watts = w * y_scale / x_scale
+    intercept_watts = y_mean + y_scale * b - float(coef_watts @ x_mean)
+    return w, coef_watts, intercept_watts

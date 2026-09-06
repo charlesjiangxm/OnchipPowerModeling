@@ -110,5 +110,22 @@ def synth_windowed(tmp_path):
     return cfg, PLANTED
 
 
+@pytest.fixture(autouse=True)
+def _no_leaked_figures():
+    """Every plot function must close its own figure.
+
+    ``--fit`` calls them once per (-q, model) experiment, and a leaked Figure
+    pins its whole data array -- gigabytes at ``window_size: 1``.
+    """
+    pytest.importorskip("matplotlib")
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    yield
+    assert plt.get_fignums() == [], "a plot function did not close its figure"
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: end-to-end test that trains a model")

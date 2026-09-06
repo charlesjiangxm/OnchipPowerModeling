@@ -4,12 +4,14 @@ Contains three stages: build_db, feature_select, fit. Run directly (no package/-
     python src/binary_fit/run.py --build_db --config src/binary_fit/configs/cobit.yaml
 
 2. Feature selection:
-    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-01-16-30-01
-    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-01-16-30-01
+    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-03-17-100proxy;
+    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-03-17-100proxy;
+    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/ridge.yaml --outdir analysis/ridge/2026-09-03-17-100proxy;
 
-3. Regression (fit):
-    python src/binary_fit/run.py --fit --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-01-16-30-01 --model tree
-    python src/binary_fit/run.py --fit --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-01-16-30-01 --model nn
+3. Regression (fit, tree, nn, ridge) on the selected proxies:
+    python src/binary_fit/run.py --fit --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-03-17-100proxy --model tree;
+    python src/binary_fit/run.py --fit --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-03-17-100proxy --model nn;
+    python src/binary_fit/run.py --fit --config src/binary_fit/configs/ridge.yaml --outdir analysis/ridge/2026-09-03-17-100proxy --model ridge
 
 Options:
 1. --no-hpo to skip HPO
@@ -27,22 +29,32 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 import xgboost as xgb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from binary_fit import build_db, data, hpo, models
 from binary_fit.config import Config
-from binary_fit.evaluate import evaluation_report, plot_q_sweep, plot_trace
+from binary_fit.evaluate import evaluation_report
+from binary_fit.plots import plot_pred_vs_time, plot_q_sweep, plot_residual_panels
 from binary_fit.utils import (
     load_json,
     load_proxies_csv,
     log,
     save_coefficients_csv,
     save_json,
+    save_pickle_zst,
     save_proxies_csv,
+    save_ridge_coefficients_csv,
     setup_logging,
 )
+
+
+# The Stage-2 regressors, in report order. Single source of truth for the
+# --model choices, the _run_one dispatch and the cmd_fit pre-flight check, so a
+# fourth backend is registered in exactly one place.
+MODEL_KINDS = ("tree", "nn", "ridge")
 
 
 def _fmt(x):
@@ -142,32 +154,183 @@ def _fit_nn(cfg, qdir, Xtr, ytr, Xval, yval, use_hpo):
     return best, models.nn_importance(model), "", lambda X: models.predict(model, xs, ys, X)
 
 
-def _run_one(kind, cfg, mdir, label, names, col_ids, weights, union, use_hpo) -> dict:
-    qdir = Path(mdir) / label
+def _cap_ridge_rows(cfg, X, y):
+    """Seeded row subsample of the ridge fitting set (``ridge.max_rows``; 0 = all).
+
+    Two costs scale with the row count, neither of them an SVD -- for ``p < n``
+    and ``gcv_mode="auto"`` sklearn picks the ``"cov"`` path (a Q x Q
+    eigendecomposition), never ``"svd"``:
+
+    * memory -- the float64 standardized design is ``n_rows x Q x 8`` bytes on top
+      of the float32 copy ``Union.slice`` already holds: 160 MB at 200k x 100, but
+      16 GB at the ``window_size: 1`` x ``Q=1000`` corner;
+    * time -- ``_solve_eigen_covariance`` recomputes two ``n x Q`` products once
+      *per alpha* for the leverage diagonal, so the grid does not come free the
+      way a single-decomposition path would: measured at n=120k, Q=150, RidgeCV
+      takes 1.39 s over 5 alphas and 4.19 s over 25, against 1.05 s for one
+      ``X'X`` + ``eigh`` (after which every alpha is a back-substitution).
+
+    A linear model over at most a few thousand proxies is fully determined long
+    before 200k rows, so the cap costs nothing measurable -- and at the default
+    ``window_size: 32`` it never fires on aq_core (measured: 6895 train + 1721 val
+    = 8616 fitting rows). Same seeded-subsample idiom as ``data.load_split``'s
+    ``selection.max_rows``.
+    """
+    n, cap = int(X.shape[0]), int(cfg.ridge.max_rows)
+    if not (0 < cap < n):
+        return X, y
+    rng = np.random.default_rng(cfg.runtime.seed)
+    rows = np.sort(rng.choice(n, size=cap, replace=False))
+    log.info("ridge: fitting on a seeded %d/%d row subsample (ridge.max_rows)", cap, n)
+    return X[rows], y[rows]
+
+
+def _fit_ridge(cfg, qdir, Xtr, ytr, Xval, yval, names, col_ids, use_hpo):
+    """L2-penalized linear fit; alpha from RidgeCV's leave-one-out generalized CV.
+
+    Two deliberate divergences from ``_fit_tree`` / ``_fit_nn``, both consequences
+    of the search living inside the estimator instead of in an optuna study on the
+    validation tail:
+
+    * The search does not consume the validation split -- RidgeCV's GCV runs
+      *within* the rows it is handed -- so with HPO on, train and val go in as one
+      fitting set. That is exactly the data the other two backends end up refit on
+      once their hyperparameters are picked, which is why ``_run_one``'s
+      "in HPO refit" panel captions are already correct here. ``best["val_r2"]``
+      is ``None`` accordingly: nothing in this function scored the val split.
+    * Consequently this is the one backend that runs at ``split.val_fraction: 0``
+      with HPO on, where the other two raise. Do not add that guard here.
+    """
+    if use_hpo and Xval is not None and yval.size:
+        X_fit = np.vstack([Xtr, Xval])
+        y_fit = np.concatenate([ytr, yval])
+    else:  # --no-hpo fits train only, like the other two, so the captions hold
+        X_fit, y_fit = Xtr, ytr
+    X_fit, y_fit = _cap_ridge_rows(cfg, X_fit, y_fit)
+
+    n_fit = int(X_fit.shape[0])
+    if use_hpo:
+        alphas = models.ridge_alphas(cfg.ridge.alpha_rel_max, cfg.ridge.grid_decades,
+                                     cfg.ridge.grid_points, n_fit)
+        model, xs, ys = models.fit_ridge_scaled(
+            X_fit, y_fit, alphas=alphas, fit_intercept=cfg.ridge.fit_intercept)
+        # RidgeCV(scoring=None).best_score_ is NEGATIVE MSE on the standardized
+        # target, not an R2. Named so it cannot be misread as one.
+        best = {"alpha": float(model.alpha_), "gcv_neg_mse": float(model.best_score_),
+                "alpha_grid": [float(alphas[0]), float(alphas[-1]), int(alphas.size)],
+                "val_r2": None}
+        log.info("best ridge: alpha=%.4e (alpha_rel=%.4e, LOO-GCV over %d rows, "
+                 "grid %.1e..%.1e x%d)", best["alpha"], best["alpha"] / n_fit, n_fit,
+                 alphas[0], alphas[-1], alphas.size)
+    else:
+        alpha = models.NOHPO_RIDGE_ALPHA_REL * n_fit
+        model, xs, ys = models.fit_ridge_scaled(
+            X_fit, y_fit, alpha=alpha, fit_intercept=cfg.ridge.fit_intercept)
+        best = {"alpha": float(alpha), "gcv_neg_mse": None,
+                "alpha_grid": None, "val_r2": None}
+    coef_std, coef_watts, intercept_watts = models.ridge_coefficients(model, xs, ys)
+    best["intercept_watts"] = intercept_watts
+    best["n_fit_rows"] = n_fit
+    # the row-relative alpha is the one comparable across runs and row counts
+    best["alpha_rel"] = best["alpha"] / n_fit if n_fit else None
+    joblib.dump({"model": model, "x_scaler": xs, "y_scaler": ys}, qdir / "model.joblib")
+    save_ridge_coefficients_csv(qdir / "ridge_coefficients.csv", names, col_ids,
+                                coef_std, coef_watts)
+    return best, models.ridge_importance(model), "", lambda X: models.predict(model, xs, ys, X)
+
+
+def _predictions_frame(preds: dict, splits: dict) -> pd.DataFrame:
+    """Long frame of every split's labels and predictions, for later replotting.
+
+    Lets a figure or a per-benchmark breakdown be redone without re-running the
+    fit (an HPO fit costs minutes to hours). ``bench``/``split`` are stored as
+    categoricals; rows no slice covers keep an empty benchmark name.
+    """
+    frames = []
+    for split, (y, yhat) in preds.items():
+        bench = np.full(y.size, "", dtype=object)
+        for name, sl in splits[split][2].items():
+            bench[sl] = name
+        frames.append(pd.DataFrame(
+            {"bench": bench, "split": split, "y_true": y, "y_pred": yhat}))
+    out = pd.concat(frames, ignore_index=True)
+    for col in ("bench", "split"):
+        out[col] = out[col].astype("category")
+    return out
+
+
+def _try_plot(fn, *args, **kwargs):
+    """Render a figure without ever letting it cost a completed fit.
+
+    Only ever called after ``result.json`` is on disk, so a render failure can
+    lose the figure and nothing else -- but unwrapped it would still abort the
+    remaining ``-q`` experiments of a run whose models are already saved. The
+    broad ``except`` is safe structurally rather than by narrowing the exception
+    tuple: the plot functions are unit-tested with no wrapper in the path, the
+    full traceback is logged, and ``test_e2e`` asserts the exact artifact set,
+    so this handler cannot go permanently active unnoticed.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001 - see the docstring
+        log.exception("%s: figure not written (the fit result is unaffected)",
+                      getattr(fn, "__name__", fn))
+        return None
+
+
+def _experiment_dir(mdir: Path, label: str, n_experiments: int) -> Path:
+    """Where one experiment's artifacts go, under its model directory.
+
+    A lone experiment -- the default ``-q -1`` -- writes straight into the model
+    directory, so a ridge run is just ``<outdir>/ridge/`` with no single-child
+    ``all/`` wrapper to descend through. Two or more experiments would overwrite
+    each other there (one ``result.json``, one ``model.*``, one set of figures
+    between them), so each of those keeps a ``<label>/`` subdirectory.
+
+    ``label`` is deliberately not consulted for the choice: it stays the
+    experiment's *name* -- the optuna study in ``_fit_tree``, ``result.json``'s
+    ``label``, the ``report.md`` row, the figure titles -- whether or not it also
+    names a directory.
+    """
+    return Path(mdir) if n_experiments == 1 else Path(mdir) / label
+
+
+def _run_one(kind, cfg, qdir, label, names, col_ids, weights, union, use_hpo) -> dict:
+    qdir = Path(qdir)
     qdir.mkdir(parents=True, exist_ok=True)
     Xtr, Xval, Xte = union.slice(col_ids)
     ytr, yval, yte = union.y_train, union.y_val, union.y_test
     log.info("[%s] %s: train %s val %s test %s", kind, label, Xtr.shape,
              None if Xval is None else Xval.shape, Xte.shape)
+    # Explicit per-kind, never a bare else: an unknown kind used to fall through
+    # to the nn fitter and get reported under its own name in result.json.
     if kind == "tree":
         best, importances, leaves, predict_fn = _fit_tree(
             cfg, qdir, label, Xtr, ytr, Xval, yval, col_ids, use_hpo)
-    else:
+    elif kind == "nn":
         best, importances, leaves, predict_fn = _fit_nn(cfg, qdir, Xtr, ytr, Xval, yval, use_hpo)
+    elif kind == "ridge":
+        best, importances, leaves, predict_fn = _fit_ridge(
+            cfg, qdir, Xtr, ytr, Xval, yval, names, col_ids, use_hpo)
+    else:
+        raise ValueError(f"unknown model kind {kind!r} (expected {', '.join(MODEL_KINDS)})")
 
     save_coefficients_csv(qdir / "coefficients.csv", names, col_ids, weights, importances)
-    reports = {}
-    if ytr.size:
-        reports["train"] = evaluation_report(cfg, ytr, predict_fn(Xtr), union.train_slices, "train")
-    if Xval is not None and yval.size:
-        reports["val"] = evaluation_report(cfg, yval, predict_fn(Xval), union.val_slices, "val")
-    yhat = predict_fn(Xte)
-    reports["test"] = evaluation_report(cfg, yte, yhat, union.test_slices, "test")
     window = int(cfg.data.window_size)
-    if yte.size:
-        unit = "cycle" if window == 1 else f"window ({window} cycles)"
-        plot_trace(yte, yhat, qdir / "trace_test.png", max_cycles=cfg.eval.trace_plot_cycles,
-                   title=f"{kind} {label}: test power label vs prediction", xlabel=unit)
+    splits = {}  # split -> (y, X, bench_slices)
+    if ytr.size:
+        splits["train"] = (ytr, Xtr, union.train_slices)
+    if Xval is not None and yval.size:
+        splits["val"] = (yval, Xval, union.val_slices)
+    splits["test"] = (yte, Xte, union.test_slices)  # reported even when empty
+    reports, preds = {}, {}
+    for split, (y, X, bench_slices) in splits.items():
+        # one inference per split, shared by the metrics and both figure types,
+        # so what is plotted is provably what was scored
+        yhat = predict_fn(X)
+        reports[split] = evaluation_report(cfg, y, yhat, bench_slices, split)
+        if y.size:
+            preds[split] = (y, yhat)
 
     rec = {"method": kind, "mode": "hpo" if use_hpo else "no_hpo", "label": label,
            "q": int(len(col_ids)), "n_proxies": int(len(col_ids)), "best": best,
@@ -177,12 +340,30 @@ def _run_one(kind, cfg, mdir, label, names, col_ids, weights, union, use_hpo) ->
            "test_r2": reports["test"]["r2"], "test_mape": reports["test"]["mape"],
            "reports": reports}
     save_json(qdir / "result.json", rec)
+    # Figures and predictions come AFTER result.json. The model was saved back in
+    # _fit_*, and _aggregate collects experiments by reading result.json back, so a
+    # render failure here must not be able to erase a completed fit.
+    if preds:
+        save_pickle_zst(_predictions_frame(preds, splits), qdir / "predictions.pkl.zst")
+        for split, (y, yhat) in preds.items():
+            _try_plot(plot_pred_vs_time, y, yhat, splits[split][2],
+                      qdir / f"pred_vs_time_{split}.png",
+                      name=f"{kind} {label} | {split}", window_size=window)
+        # the figure name records which splits existed. Only test is ever held
+        # out, and with HPO not even val: the final model is refit on train+val
+        # once the hyperparameters are picked, so both panels say why.
+        in_sample = {"train": "in HPO refit", "val": "in HPO refit"} if use_hpo \
+            else {"train": "in-sample"}
+        _try_plot(plot_residual_panels, preds,
+                  qdir / f"residual_{'_'.join(preds)}.png", name=f"{kind} {label}",
+                  in_sample=in_sample)
     log.info("[%s] %s: test R2=%.4f MAPE=%.3f%% (train R2=%s val R2=%s)",
              kind, label, rec["test_r2"], rec["test_mape"], _fmt(rec["train_r2"]), _fmt(rec["val_r2"]))
     return rec
 
 
-def _write_report_md(records: list[dict], path: Path, title: str) -> None:
+def _write_report_md(records: list[dict], path: Path, title: str, *,
+                     flat: bool = False, sweep: bool = True) -> None:
     recs = sorted(records, key=lambda r: -r["q"])
     # window is per-record: an outdir reused across window sizes must not read
     # as one experiment just because the title stamps the latest run's value
@@ -197,21 +378,75 @@ def _write_report_md(records: list[dict], path: Path, title: str) -> None:
             f"{_fmt(r.get('test_r2'))} | {r.get('test_mape', float('nan')):.3f} |")
     if recs:
         best = max(recs, key=lambda r: (r.get("test_r2") if r.get("test_r2") is not None else -9))
+        # a lone experiment writes beside this report, several keep one <label>/
+        # subdirectory each -- see _experiment_dir
+        where = "Beside this report" if flat else "Per experiment, under `<experiment>/`"
         lines += ["", f"**Best test R²** = {_fmt(best.get('test_r2'))} at {best.get('label','')} "
-                      f"(Q={best.get('q','')}, test MAPE {best.get('test_mape', float('nan')):.3f}%)."]
+                      f"(Q={best.get('q','')}, test MAPE {best.get('test_mape', float('nan')):.3f}%).",
+                  "", "## Figures", "",
+                  f"{where} (power plotted in mW; the",
+                  "target and every metric above are in watts):", "",
+                  "- `residual_train_val_test.png` — predicted vs true power, one panel",
+                  "  per split, red dashed line is y = x. The name records which splits",
+                  "  existed (`residual_train_test.png` at `split.val_fraction: 0`). With",
+                  "  HPO the final model is refit on train+val, so those panels are",
+                  "  labelled in-sample.",
+                  "- `pred_vs_time_{train,val,test}.png` — label and prediction over the",
+                  "  split's concatenated benchmarks, boundaries dotted and named. Full",
+                  "  resolution, never decimated.",
+                  "- `predictions.pkl.zst` — bench/split/y_true/y_pred, to redo either",
+                  "  figure without re-running the fit."]
+        # ridge-only, so a tree or nn report.md stays byte-identical to before
+        if any(r.get("method") == "ridge" for r in recs):
+            lines += ["- `ridge_coefficients.csv` — the signed linear fit: `coef_std` is",
+                      "  comparable across bits, `coef_watts` is watts per unit of the",
+                      "  feature. The matching `intercept_watts` is in `result.json`",
+                      "  under `best`."]
+        if sweep:
+            lines += ["", "Across experiments: `q_sweep.png`."]
     Path(path).write_text("\n".join(lines) + "\n")
 
 
 def _aggregate(mdir: Path, title: str) -> list[dict]:
     mdir = Path(mdir)
-    records = [load_json(d / "result.json") for d in sorted(mdir.iterdir())
-               if d.is_dir() and (d / "result.json").exists()]
+    # An experiment is either a <label>/ subdirectory (several -q values) or mdir
+    # itself (a lone one -- see _experiment_dir), and both shapes can coexist when
+    # one outdir is reused across --fit runs. The scan is kept in preference to
+    # reusing _run_one's return values: it is what lets the Q sweep accumulate
+    # across separate invocations, and it reads result.json back from disk, which
+    # is written before any figure so a render failure cannot erase an experiment.
+    dirs = [d for d in sorted(mdir.iterdir())
+            if d.is_dir() and (d / "result.json").exists()]
+    if (mdir / "result.json").exists():
+        dirs.insert(0, mdir)
+    records = [load_json(d / "result.json") for d in dirs]
     if not records:
-        log.warning("no */result.json under %s", mdir)
+        log.warning("no result.json in %s or its subdirectories", mdir)
         return records
+    # The one way the two shapes go wrong together: refitting into an outdir
+    # written before the flat layout leaves the old <label>/ beside the new flat
+    # result.json, and the SAME experiment is then reported twice -- two "all"
+    # rows with different scores, and a q_sweep drawn across a duplicated point.
+    # Different labels coexisting is legitimate (-q 50 then -q -1) and stays
+    # quiet; only a repeated one is a stale directory.
+    labels = [r.get("label", "") for r in records]
+    dupes = sorted({lb for lb in labels if labels.count(lb) > 1})
+    if dupes:
+        log.warning("%s reports %s twice - a stale pre-flattening subdirectory is "
+                    "sitting beside the flat result.json. Delete %s and refit, or "
+                    "read report.md knowing the duplicate rows are different runs.",
+                    mdir, ", ".join(dupes), ", ".join(str(mdir / lb) for lb in dupes))
+    # A one-point sweep draws a single marker and no curve, so it is not written
+    # -- and report.md must not advertise a figure that is not there. The prose
+    # only claims the flat layout when that lone experiment IS the flat one.
+    sweep = len(records) > 1
+    flat = not sweep and dirs == [mdir]
     save_json(mdir / "metrics.json", {"records": records})
-    plot_q_sweep(records, mdir / "figures" / "q_sweep.png")
-    _write_report_md(records, mdir / "report.md", title)
+    _write_report_md(records, mdir / "report.md", title, flat=flat, sweep=sweep)
+    if sweep:
+        _try_plot(plot_q_sweep, records, mdir / "q_sweep.png")
+    else:
+        log.info("q_sweep: 1 experiment under %s, nothing to sweep", mdir)
     log.info("aggregate: %d experiments -> %s", len(records), mdir / "report.md")
     return records
 
@@ -273,6 +508,11 @@ def _warn_window_mismatch(cfg: Config, proxies_path: Path) -> None:
 
 
 def cmd_fit(cfg: Config, outdir: Path, proxies_path: Path, qs, model_kinds, use_hpo) -> int:
+    # checked before load_split/Union, which are minutes of I/O on the real
+    # dataset -- a mistyped kind should not be discovered after all of that
+    unknown = [k for k in model_kinds if k not in MODEL_KINDS]
+    if unknown:
+        raise ValueError(f"unknown model kind(s) {unknown} (expected {', '.join(MODEL_KINDS)})")
     names, col_ids, weights = load_proxies_csv(proxies_path)
     log.info("loaded %d proxies from %s", len(names), proxies_path)
     _warn_window_mismatch(cfg, proxies_path)
@@ -293,7 +533,8 @@ def cmd_fit(cfg: Config, outdir: Path, proxies_path: Path, qs, model_kinds, use_
     for kind in model_kinds:
         mdir = outdir / kind
         for label, snames, sids, sw in sels:
-            _run_one(kind, cfg, mdir, label, snames, sids, sw, union, use_hpo)
+            _run_one(kind, cfg, _experiment_dir(mdir, label, len(sels)), label,
+                     snames, sids, sw, union, use_hpo)
         _aggregate(mdir, title=f"binary_fit {kind} ({'hpo' if use_hpo else 'no_hpo'}, "
                               f"window={cfg.data.window_size})")
     return 0
@@ -314,7 +555,9 @@ def main(argv=None) -> int:
     ap.add_argument("--proxies", default=None, help="proxies.csv path (default <outdir>/proxies.csv)")
     ap.add_argument("-q", "--q", type=int, nargs="+", default=[-1],
                     help="proxy counts to fit; -1 = all (default [-1])")
-    ap.add_argument("--model", choices=["tree", "nn", "both"], default="tree")
+    ap.add_argument("--model", choices=[*MODEL_KINDS, "both"], default="tree",
+                    help="Stage-2 regressor; 'both' fits every kind "
+                         f"({', '.join(MODEL_KINDS)})")
     ap.add_argument("--no-hpo", action="store_true", help="skip HPO (fixed hyperparameters)")
     ap.add_argument("--window-size", "--window_size", type=int, default=None, dest="window_size",
                     help="cycles averaged into one row before selection/fit "
@@ -347,7 +590,8 @@ def main(argv=None) -> int:
     proxies_path = Path(args.proxies) if args.proxies else outdir / "proxies.csv"
     if not proxies_path.exists():
         raise FileNotFoundError(f"{proxies_path} not found - run --feature_select first")
-    kinds = ["tree", "nn"] if args.model == "both" else [args.model]
+    # "both" is inherited from when there were two backends; it means all of them
+    kinds = list(MODEL_KINDS) if args.model == "both" else [args.model]
     return cmd_fit(cfg, outdir, proxies_path, args.q, kinds, use_hpo=not args.no_hpo)
 
 
