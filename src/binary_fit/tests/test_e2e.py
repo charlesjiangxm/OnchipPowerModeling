@@ -19,9 +19,14 @@ _FIT_ARTIFACTS = [
     "result.json",
 ]
 # --model ridge writes one more: the signed linear fit. coefficients.csv is
-# shared by all three backends and its `value` column is the Stage-1 MCP weight,
+# shared by all four backends and its `value` column is the Stage-1 MCP weight,
 # so the fitted coefficients need their own file.
 _RIDGE_ARTIFACTS = _FIT_ARTIFACTS + ["ridge_coefficients.csv"]
+# --model rulefit writes two more: the term table (one row per rule AND per
+# linear term, so it cannot live in a per-feature file at all) and the Friedman
+# interaction figure.
+_RULEFIT_ARTIFACTS = _FIT_ARTIFACTS + ["interaction_strength.png",
+                                       "rulefit_terms.csv"]
 # _aggregate's own output. A lone experiment IS the model directory
 # (run._experiment_dir), so these land beside that experiment's artifacts rather
 # than a level above it. q_sweep.png is deliberately NOT here: one experiment is
@@ -357,3 +362,144 @@ def test_cmd_fit_rejects_an_unknown_model_kind(tmp_path):
     with pytest.raises(ValueError, match="unknown model kind"):
         run.cmd_fit(Config(), tmp_path, tmp_path / "proxies.csv", qs=[-1],
                     model_kinds=["ridge", "bogus"], use_hpo=False)
+
+
+# --------------------------------------------------------------------------- #
+# rulefit backend
+# --------------------------------------------------------------------------- #
+def _small_rulefit(cfg):
+    """Shrink the shipped rulefit defaults, which are sized for 69k real rows."""
+    cfg.rulefit.max_rules = 40
+    cfg.rulefit.cv = 2
+    cfg.rulefit.n_jobs = 1
+    cfg.rulefit.h_top_k = 3
+    return cfg
+
+
+@pytest.mark.slow
+def test_end_to_end_rulefit(synth, tmp_path):
+    """The fixture's law is exactly linear in three bits with positive weights.
+
+    So the non-negative linear terms alone should fit it, and the term table must
+    name every planted bit. Also checks the two artifacts and the col_ids that
+    make them worth writing.
+    """
+    import csv
+
+    pytest.importorskip("rulefit")
+    cfg, planted = _small_rulefit(synth[0]), synth[1]
+    build_db.build(cfg)
+    outdir = tmp_path / "run"
+    outdir.mkdir()
+    run.cmd_feature_select(cfg, outdir)
+    names, col_ids, _ = load_proxies_csv(outdir / "proxies.csv")
+    run.cmd_fit(cfg, outdir, outdir / "proxies.csv", qs=[-1],
+                model_kinds=["rulefit"], use_hpo=False)
+
+    qdir = outdir / "rulefit"
+    rec = load_json(qdir / "result.json")
+    best = rec["best"]
+    assert rec["method"] == "rulefit"
+    # blank on purpose: a deduplicated rule is not a score register. best carries
+    # this backend's size numbers instead.
+    assert rec["final_leaves"] == ""
+    assert rec["test_r2"] > 0.9  # ridge asserts 0.8, tree 0.5, nn 0.3
+    assert best["val_r2"] is None and best["n_trials"] is None  # --no-hpo
+    assert best["n_nonzero_terms"] > 0  # not the collapsed model
+    assert (best["n_nonzero_linear"] + best["n_nonzero_rules"]
+            == best["n_nonzero_terms"])
+    # len(names), not a hard-coded 3: selection.exact_q only truncates a support
+    # that exceeds the target, so fewer proxies is reachable
+    assert best["n_linear_terms"] == len(names)
+    assert best["n_rules"] <= cfg.rulefit.max_rules
+    assert best["n_alphas"] == cfg.rulefit.n_alphas
+    # loose: the rules absorb part of the fixture's 0.5 offset
+    assert best["intercept_watts"] == pytest.approx(0.5, abs=0.2)
+    _assert_artifacts(qdir, _RULEFIT_ARTIFACTS, "model.joblib")
+
+    with open(qdir / "rulefit_terms.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [*rows[0]] == ["rank", "term", "type", "coef_watts", "support",
+                          "importance", "n_variables", "col_ids"]
+    assert len(rows) == best["n_nonzero_terms"]
+    assert all(float(r["coef_watts"]) != 0.0 for r in rows)  # non-zero terms only
+    imps = [float(r["importance"]) for r in rows]
+    assert imps == sorted(imps, reverse=True)
+    assert all(0.0 <= float(r["support"]) <= 1.0 for r in rows)
+    known = set(int(c) for c in col_ids)
+    name_to_id = dict(zip(names, (int(c) for c in col_ids)))
+    for r in rows:
+        ids = [int(c) for c in r["col_ids"].split(";")]
+        assert set(ids) <= known
+        assert len(ids) == int(r["n_variables"])
+        if r["type"] == "linear":
+            assert float(r["support"]) == 1.0  # the fork's convention
+            assert ids == [name_to_id[r["term"]]]
+    assert set(planted) <= {r["term"] for r in rows if r["type"] == "linear"}
+
+
+@pytest.mark.slow
+def test_end_to_end_rulefit_no_validation_split(synth, tmp_path):
+    """At val_fraction 0 the val figures are gone and residual_ is renamed.
+
+    The layout _RULEFIT_ARTIFACTS alone gets wrong, and _assert_artifacts asserts
+    the EXACT set. HPO is off here: with it on, rulefit raises without a val split
+    (unlike ridge) -- that guard is pinned in test_fit.py.
+    """
+    pytest.importorskip("rulefit")
+    cfg, _ = synth
+    _small_rulefit(cfg)
+    cfg.split.val_fraction = 0.0
+    build_db.build(cfg)
+    outdir = tmp_path / "run"
+    outdir.mkdir()
+    run.cmd_feature_select(cfg, outdir)
+    run.cmd_fit(cfg, outdir, outdir / "proxies.csv", qs=[-1],
+                model_kinds=["rulefit"], use_hpo=False)
+    qdir = outdir / "rulefit"
+    assert load_json(qdir / "result.json")["val_r2"] is None
+    expected = [f for f in _RULEFIT_ARTIFACTS
+                if f not in ("pred_vs_time_val.png", "residual_train_val_test.png")]
+    _assert_artifacts(qdir, expected + ["residual_train_test.png"], "model.joblib")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("broken", ["render", "compute"])
+def test_a_rulefit_plot_failure_does_not_lose_the_fit(synth, tmp_path, monkeypatch,
+                                                     caplog, broken):
+    """The interaction figure is drawn from inside the fitter, before result.json.
+
+    The tree/nn/ridge figures are drawn after it, so _try_plot's safety there is
+    also an ordering argument. Here it is not: only the fitter holds the fitted
+    estimator. What has to hold is that _try_plot never raises -- so a broken
+    figure costs the figure and nothing else, and every other artifact still
+    lands.
+
+    Both halves are covered: `render` breaks the drawing, `compute` breaks
+    models.rulefit_interactions, which walks the rule ensemble and can fail on
+    its own. The H computation therefore has to sit INSIDE the guarded call
+    rather than being evaluated as an argument to it.
+    """
+    import logging
+
+    pytest.importorskip("rulefit")
+    cfg, _ = synth
+    _small_rulefit(cfg)
+    build_db.build(cfg)
+    outdir = tmp_path / "run"
+    outdir.mkdir()
+    run.cmd_feature_select(cfg, outdir)
+    boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))  # noqa: E731
+    if broken == "render":
+        monkeypatch.setattr(run, "plot_interaction_strength", boom)
+    else:
+        monkeypatch.setattr(run.models, "rulefit_interactions", boom)
+    with caplog.at_level(logging.ERROR, logger="binary_fit"):
+        run.cmd_fit(cfg, outdir, outdir / "proxies.csv", qs=[-1],
+                    model_kinds=["rulefit"], use_hpo=False)
+    qdir = outdir / "rulefit"
+    assert load_json(qdir / "result.json")["method"] == "rulefit"
+    expected = [f for f in _RULEFIT_ARTIFACTS if f != "interaction_strength.png"]
+    _assert_artifacts(qdir, expected, "model.joblib")
+    assert any("boom" in r.getMessage() or "boom" in str(r.exc_info)
+               for r in caplog.records)

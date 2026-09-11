@@ -92,10 +92,13 @@ def test_model_both_now_expands_to_every_kind(tmp_path, monkeypatch):
     """`both` meant tree+nn when there were two backends; it means ALL of them.
 
     Pinned because it is the one behaviour change the ridge backend made to an
-    existing command line.
+    existing command line -- and `both` has now silently absorbed a second
+    backend (rulefit), which is exactly the kind of change this catches. The
+    triple equality is the point: it pins that `both` reads MODEL_KINDS rather
+    than a literal list that could drift from it.
     """
     seen = _main_kinds(tmp_path, monkeypatch, "--model", "both", "--no-hpo")
-    assert seen["kinds"] == list(run.MODEL_KINDS) == ["tree", "nn", "ridge"]
+    assert seen["kinds"] == list(run.MODEL_KINDS) == ["tree", "nn", "ridge", "rulefit"]
     assert seen["use_hpo"] is False
 
 
@@ -164,3 +167,95 @@ def test_fit_ridge_row_set_depends_on_hpo(tmp_path, use_hpo, with_val, expected_
     assert sorted(p.name for p in qdir.iterdir()) == ["model.joblib",
                                                       "ridge_coefficients.csv"]
     assert predict_fn(Xtr).shape == (40,)
+
+
+# --------------------------------------------------------------------------- #
+# rulefit backend wiring
+# --------------------------------------------------------------------------- #
+def test_cap_rows_is_shared_by_ridge_and_rulefit():
+    """The generalized cap: 0 and "above n" both mean every row, by identity.
+
+    Pins the refactor that let _fit_rulefit reuse _cap_ridge_rows' body. The
+    ridge-specific test above must keep passing through the thin wrapper; this
+    one covers the shared function with an explicit cap and label.
+    """
+    cfg = Config()
+    X = np.arange(200, dtype=np.float32).reshape(100, 2)  # row i = [2i, 2i+1]
+    y = np.arange(100.0)
+
+    assert run._cap_rows(cfg, X, y, 0, "what")[0] is X  # 0 -> every row
+    assert run._cap_rows(cfg, X, y, 500, "what")[0] is X  # cap above n: untouched
+    assert run._cap_rows(cfg, X, y, -5, "what")[0] is X  # negative is not "sample none"
+
+    Xa, ya = run._cap_rows(cfg, X, y, 20, "what")
+    Xb, yb = run._cap_rows(cfg, X, y, 20, "what")
+    assert Xa.shape == (20, 2) and ya.shape == (20,)
+    assert np.array_equal(Xa, Xb) and np.array_equal(ya, yb)  # seeded
+    assert np.array_equal(Xa[:, 0], ya * 2)  # X and y still describe the same rows
+    assert np.all(np.diff(ya) > 0)  # sorted, so benchmark order is preserved
+
+
+@pytest.mark.parametrize("use_hpo,with_val,expected_rows",
+                         [(False, True, 40), (True, True, 50)])
+def test_fit_rulefit_row_set_depends_on_hpo(tmp_path, use_hpo, with_val, expected_rows):
+    """With HPO the val split JOINS the refit; with --no-hpo it fits train only.
+
+    The same contract the tree and nn backends have, which is what makes
+    _run_one's "in HPO refit" panel captions correct without a change. The HPO
+    case runs a 2-trial study on purpose -- the shipped default is 12, which does
+    not belong in the fast suite.
+    """
+    pytest.importorskip("rulefit")
+    cfg = Config()
+    cfg.rulefit.max_rules = 30
+    cfg.rulefit.cv = 2
+    cfg.rulefit.n_jobs = 1
+    cfg.rulefit.hpo_n_trials = 2
+    cfg.rulefit.hpo_rows = 0
+    rng = np.random.default_rng(0)
+    w = np.array([1.0, 2.0, 3.0])
+    Xtr = rng.random((40, 3)).astype(np.float32)
+    ytr = Xtr @ w + 0.1
+    if with_val:
+        Xval = rng.random((10, 3)).astype(np.float32)
+        yval = Xval @ w + 0.1
+    else:
+        Xval, yval = None, np.empty(0)
+
+    qdir = tmp_path / "q"
+    qdir.mkdir()
+    best, imp, leaves, predict_fn = run._fit_rulefit(
+        cfg, qdir, "all", Xtr, ytr, Xval, yval, ["a", "b", "c"],
+        np.array([0, 1, 2]), use_hpo)
+
+    assert best["n_fit_rows"] == expected_rows
+    assert leaves == ""  # a deduplicated rule is not a score register
+    assert imp.shape == (3,) and np.all(imp >= 0)
+    assert (best["val_r2"] is None) is (not use_hpo)
+    assert (best["hpo_rows"] is None) is (not use_hpo)
+    # the size numbers must agree with each other
+    assert (best["n_nonzero_linear"] + best["n_nonzero_rules"]
+            == best["n_nonzero_terms"])
+    assert best["n_rules"] <= cfg.rulefit.max_rules
+    assert best["n_alphas"] == cfg.rulefit.n_alphas
+    assert predict_fn(Xtr).shape == (40,)
+    # the cheapest guard that no optuna.db leaked out of the in-memory study
+    assert sorted(p.name for p in qdir.iterdir()) == [
+        "interaction_strength.png", "model.joblib", "rulefit_terms.csv"]
+
+
+def test_fit_rulefit_needs_a_validation_split_under_hpo(tmp_path):
+    """rulefit KEEPS the tree/nn guard that _fit_ridge deliberately omits.
+
+    The mirror image of test_e2e's test_ridge_fits_without_a_validation_split,
+    whose docstring exists to stop this guard being copied INTO ridge. This one
+    exists to stop it being removed FROM rulefit: ridge's alpha search runs
+    inside the rows it is handed, while this study scores the val tail, so with
+    no val split there is nothing for it to maximize.
+    """
+    pytest.importorskip("rulefit")
+    cfg = Config()
+    Xtr = np.random.default_rng(0).random((20, 3)).astype(np.float32)
+    with pytest.raises(RuntimeError, match="validation split"):
+        run._fit_rulefit(cfg, tmp_path, "all", Xtr, np.arange(20.0), None,
+                         np.empty(0), ["a", "b", "c"], np.array([0, 1, 2]), True)

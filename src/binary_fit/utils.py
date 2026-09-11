@@ -146,6 +146,8 @@ def load_proxies_csv(path: Path):
 
 COEF_CSV_HEADER = ["rank", "name", "col_id", "value", "importance"]
 RIDGE_COEF_CSV_HEADER = ["rank", "name", "col_id", "coef_std", "coef_watts"]
+RULEFIT_TERMS_CSV_HEADER = ["rank", "term", "type", "coef_watts", "support",
+                            "importance", "n_variables", "col_ids"]
 
 
 def save_coefficients_csv(path: Path, names, col_ids, values, importances) -> None:
@@ -155,7 +157,7 @@ def save_coefficients_csv(path: Path, names, col_ids, values, importances) -> No
     Stage-1 LR-MCP linear coefficient of the proxy, ``importance`` is the trained
     model's feature importance (normalized to sum to 1; 0 for a feature the model
     never used). Rows sorted by ``importance`` desc, ties by ``|value|`` desc. The
-    four inputs must be index-aligned. Shared by the tree and nn backends.
+    four inputs must be index-aligned. Shared by all four backends.
     """
     import numpy as np
 
@@ -185,7 +187,7 @@ def save_ridge_coefficients_csv(path: Path, names, col_ids, coef_std, coef_watts
     """Dump the ridge backend's SIGNED coefficients, ranked by ``|coef_std|`` desc.
 
     A separate file rather than a column of ``coefficients.csv``: that table is
-    shared by all three backends and its ``value`` column is documented as the
+    shared by all four backends and its ``value`` column is documented as the
     Stage-1 LR-MCP weight of the proxy, so a fitted linear coefficient has
     nowhere to live there (and its ``importance`` column must stay non-negative).
 
@@ -214,4 +216,62 @@ def save_ridge_coefficients_csv(path: Path, names, col_ids, coef_std, coef_watts
     for rank, j in enumerate(order, start=1):
         writer.writerow([rank, names[j], int(col_ids[j]),
                          f"{std[j]:.8g}", f"{watts[j]:.8g}"])
+    atomic_write_text(Path(path), buf.getvalue())
+
+
+def save_rulefit_terms_csv(path: Path, terms: list[dict]) -> None:
+    """Dump the rulefit model's non-zero terms, in the order given.
+
+    Row dicts rather than parallel arrays, because this table's length is the
+    non-zero TERM count -- there is no per-feature index alignment to check the
+    way ``save_coefficients_csv`` has. The guard is therefore a key check.
+    ``models.rulefit_terms`` owns the ordering; ``rank`` is just its enumeration.
+
+    A separate file for ``save_ridge_coefficients_csv``'s reason and one more: a
+    rule is not a feature, so it has no row in a per-feature table at all.
+
+    Four things a reader of this file will otherwise get wrong:
+
+    * ``importance`` is the RAW Friedman & Popescu eq. (28)/(29) value, **not**
+      normalized to sum to 1 the way ``coefficients.csv``'s same-named column is.
+      The two files sit in one directory.
+    * ``coef_watts`` needs no un-scaling, unlike ridge's ``coef_std``: the lasso
+      is fitted against raw ``y``, and ``linear_coef_`` already multiplies back
+      through ``FriedScale``, which only multiplies and never centres. So at
+      ``rulefit.lin_trim_quantile: 0.0`` the identity ``predict(x) =
+      intercept_watts + sum(coef*x) + sum(coef*1[rule])`` holds exactly against
+      the raw feature (measured 1.1e-16). ``intercept_watts`` is in
+      ``result.json`` under ``best``, not a fake row here.
+    * ``col_ids`` is the global feature id of every bit the term references
+      (``;``-joined), so a rule can be traced back to its RTL nets;
+      ``n_variables`` is its length.
+    * near-duplicate rules produce identical indicator columns and the lasso
+      splits a coefficient arbitrarily among them, so read the top of the table
+      as a GROUP. 80.3% of the aq_core kept bits are exact copies of another bit,
+      which makes this the normal case, not an edge one.
+
+    Unlike ``doc/spec/x-opm-trainning-procedure.md``'s ``rule.csv`` there is no
+    ``gain`` column and no ``dropped`` column: per-rule gain comes from XGBoost's
+    ``trees_to_dataframe()`` and gain-threshold pruning is a property of the
+    ``src/xopm_lib`` bridge, and this backend has neither. ``rulefit.max_rules``
+    bounds the ensemble at generation time, and listing only the non-zero terms
+    ("the ones the model actually uses") is the meaningful analogue of ``dropped``.
+    """
+    fields = RULEFIT_TERMS_CSV_HEADER[1:]
+    want = set(fields)
+    # An exact key-set comparison, not a subset test: a row carrying an extra key
+    # would otherwise be written with that key silently dropped by the writer.
+    bad = [sorted(r) for r in terms if set(r) != want]
+    if bad:
+        raise ValueError(f"rulefit term row keys {bad[0]} != {fields}")
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(RULEFIT_TERMS_CSV_HEADER)
+    for rank, row in enumerate(terms, start=1):
+        writer.writerow([rank, row["term"], row["type"],
+                         f"{float(row['coef_watts']):.8g}",
+                         f"{float(row['support']):.8g}",
+                         f"{float(row['importance']):.8g}",
+                         int(row["n_variables"]), row["col_ids"]])
     atomic_write_text(Path(path), buf.getvalue())

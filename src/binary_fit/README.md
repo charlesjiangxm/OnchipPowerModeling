@@ -2,8 +2,10 @@
 
 Staged per-cycle power modeling from **single-bit signal features**, merging the
 former `cobit` (XGBoost) and `nn` (two-layer MLP) prior-art baselines into one
-compact package with three interchangeable Stage-2 regressors — those two plus
-`ridge`, the L2-penalized linear reference point.
+compact package with four interchangeable Stage-2 regressors — those two plus
+`ridge`, the L2-penalized linear reference point, and `rulefit`, the
+interpretable one: explicit if-then rules over the same proxies alongside
+per-bit linear terms, each with a coefficient in watts.
 
 The three stages are independent and resumable — each is one flag of
 `src/binary_fit/run.py`, run directly (no package/`-m` needed):
@@ -25,13 +27,16 @@ python src/binary_fit/run.py --fit --config src/binary_fit/configs/nn.yaml \
 
 python src/binary_fit/run.py --fit --config src/binary_fit/configs/ridge.yaml \
     --outdir analysis/binary_fit/run1 -q 250 -1 --model ridge
+
+python src/binary_fit/run.py --fit --config src/binary_fit/configs/rulefit.yaml \
+    --outdir analysis/binary_fit/run1 -q 250 -1 --model rulefit
 ```
 
-`cobit.yaml`, `nn.yaml` and `ridge.yaml` share the
+`cobit.yaml`, `nn.yaml`, `ridge.yaml` and `rulefit.yaml` share the
 `build`/`data`/`split`/`selection` sections and only differ in their
 hyperparameter block (tree-search knobs vs `nn_n_trials`/`nn_n_jobs` vs the
-`ridge:` alpha grid); use whichever matches `--model`. `--model both` fits all
-three in one pass.
+`ridge:` alpha grid vs the `rulefit:` block); use whichever matches `--model`.
+`--model both` fits all four in one pass.
 
 ## Stages
 
@@ -39,7 +44,7 @@ three in one pass.
 |-------|-------|--------|
 | `--build_db` | `build.source_db_root/func/<module>/<bench>_func.pkl.zst` (raw per-cycle signal states, `path[hi:lo]` columns) | `build.out_root/func/<bench>_func.pkl.zst` (single-bit uint8, canonical order) |
 | `--feature_select` | the single-bit `data.func_dir` / `data.pwr_dir` | `<outdir>/proxies.csv` (rank, name, col_id, mcp_weight) + `proxies.json` |
-| `--fit` | `proxies.csv` + the single-bit dataset | `<outdir>/<model>/{model.*, coefficients.csv, result.json, predictions.pkl.zst, residual_train_val_test.png, pred_vs_time_{train,val,test}.png}` (plus `ridge_coefficients.csv` for `--model ridge`) + `report.md`, `metrics.json`. Several `-q` values put each experiment in its own `<outdir>/<model>/<q>/` and add `q_sweep.png` — see [Result layout](#result-layout) |
+| `--fit` | `proxies.csv` + the single-bit dataset | `<outdir>/<model>/{model.*, coefficients.csv, result.json, predictions.pkl.zst, residual_train_val_test.png, pred_vs_time_{train,val,test}.png}` (plus `ridge_coefficients.csv` for `--model ridge`, and `rulefit_terms.csv` + `interaction_strength.png` for `--model rulefit`) + `report.md`, `metrics.json`. Several `-q` values put each experiment in its own `<outdir>/<model>/<q>/` and add `q_sweep.png` — see [Result layout](#result-layout) |
 
 ## Design notes
 
@@ -92,7 +97,7 @@ three in one pass.
   holds only `metrics.json`, `report.md` and the cross-experiment
   `q_sweep.png` — which a single experiment skips, being one point.
   `proxies.csv` stays at the `--outdir` level either way: `--feature_select`
-  never sees `--model`, and one proxy set is shared by all three backends of a
+  never sees `--model`, and one proxy set is shared by all four backends of a
   `--model both` run.
 
   The experiment's **label** (`all`, `q250`) is unchanged by the flattening — it
@@ -233,7 +238,102 @@ three in one pass.
     `Q=1000` corner. A linear model over a few thousand proxies is fully
     determined long before 200k rows, and at `window_size: 32` the cap never fires
     on aq_core (measured: 6895 train + 1721 val = 8616 fitting rows).
-- **All three backends share** the features, MCP proxies, evaluation, plots and
+- **`--model rulefit` is the interpretable additive model.** A sparse
+  non-negative lasso over `[per-bit linear terms | rule indicators]` (Friedman &
+  Popescu eq. 25), where the rules come from a gradient-boosted ensemble and each
+  one is a conjunction of thresholds on the selected proxy bits. `rulefit_terms.csv`
+  publishes every term the model actually uses, with its coefficient in watts and
+  the `col_ids` of the RTL nets it references.
+  - **Read `best.n_nonzero_linear` against `best.n_nonzero_rules` first.** They
+    answer the honest question about this backend: is it a rule model, or a lasso
+    with a few rules bolted on? Measured on the real shape (signed variant), all
+    39 linear terms survived against 75 rules — so do not assume the rules carry
+    the fit.
+  - **Accuracy is not the pitch, and it starts from behind.** Ridge already
+    reaches test R² **0.9148** on exactly these proxies (Q=39, window 4), because
+    at `window_size > 1` every feature is a bit *density* and a window's mean
+    power is close to additive in them. What rulefit adds is an auditable term
+    list that reaches that bar. *(This backend's own measured test R² goes here
+    after the first real run — it is deliberately not pre-quoted.)*
+  - **Wall clock is the binding constraint, not memory.** A fit at the real
+    shape (68,966 rows × 39 proxies, `max_rules: 600`) peaks well under 1 GB on a
+    2 TB box, but takes minutes — and how many minutes depends heavily on the data
+    and the machine load: two synthetic reproductions of that shape came out **50×
+    apart** (8.5 s and 448 s at 20k rows). Hence `rulefit.hpo_rows`, the hard
+    `rulefit.hpo_timeout_s`, and a `RuntimeError` when a study completes no trials
+    at all. **Always run `--no-hpo` once first and time it** before trusting an
+    HPO budget.
+  - **The rule stage is the library's own sklearn ensemble, not an XGBoost/DART
+    bridge**, and that was decided by measurement: the tree stage plus rule
+    extraction is ~1 s of that 448 s, so the part a bridge would replace is under
+    1% of the fit, while the fork's own test suite covers exactly the
+    `fit`/`predict`/`get_rules`/`get_feature_importance` a bridge bypasses. The
+    fork also refuses a non-sklearn generator outright, and warns that supplying
+    *any* generator makes `tree_size`/`max_rules`/`memory_par` inert — which would
+    make the `rulefit:` config section lie. The honest losses: no gain-ranking of
+    rules, no monotone *tree* constraints, no shared search surface with `--model
+    tree`, and `train.nthread` reaches only the lasso's CV workers
+    (`rulefit.n_jobs`) because the rule stage is single-threaded.
+  - **Monotonicity comes from the coefficient sign, not the trees.** sklearn's
+    gradient boosting has no `monotone_constraints`, but `non_negative_coef: true`
+    (the default, per `doc/spec/modeling-procedure.md:6`) makes every rule and
+    linear term contribute non-negatively, so raising any feature can never lower
+    predicted power. It costs something: a variable with a *decreasing* effect
+    drops out of the linear block entirely — a linear term has no complement — and
+    has to be rebuilt out of sibling rules, which is why
+    `include_interior_rules` must stay on and why `validate()` refuses the other
+    combination. Ridge reaches its 0.9148 using **signed** coefficients, so
+    `rulefit.non_negative_coef: false` is the first thing to try if the fit
+    underperforms.
+  - **`fit_intercept: true` deviates from that same spec, on evidence.** The
+    target has a large static/leakage floor (ridge's fitted intercept is ~48 mW
+    against a label std of 8.9 mW, a ratio of ~11 against the library's own
+    uncentred-target threshold of 2.0). Forcing the intercept to 0 alongside
+    non-negative coefficients made a historic x-opm run underfit to a *negative*
+    R², and measured 8-80× slower here (12.5 s → 209 s at `max_rules: 2000`;
+    21 s → 164 s at 34k rows). The spec-literal combination is one config line
+    away and `validate()` warns rather than refusing it.
+  - **`n_alphas: 20`, `tol: 1e-3`, `max_iter: 2000` are required by the
+    non-negative choice**, not a micro-optimization: at the library's own
+    100/1e-4/10000 the `positive=True` solve **did not finish in 30 minutes** on
+    an 8616 × 560 design, against 51.8 s at these settings. (With signed
+    coefficients the same change is worth only 1.4×.)
+  - **`lin_trim_quantile: 0.0`, not the library's 0.025.** At 0.025 a bit that is
+    non-zero in under 2.5% of rows gets winsor limits `[0, 0]`, hence a trimmed
+    std of 0, hence an identically-zero design column — its linear coefficient and
+    its importance are silently forced to 0. That deletes precisely the
+    rare-but-high-power bits this backend exists to surface, and it is the same
+    high-power tail the whole project keeps under-predicting. Features here are
+    densities bounded in [0, 1], so there is nothing to winsorize.
+  - **`coef_watts` needs no un-scaling** — the sharp contrast with ridge. The
+    lasso is fitted against raw `y`, and `linear_coef_` already multiplies back
+    through `FriedScale`, which only ever multiplies and never centres. So at
+    `lin_trim_quantile: 0.0` the identity `predict(x) = intercept_watts +
+    Σ coef·x + Σ coef·1[rule]` holds exactly against the raw feature (measured
+    1.1e-16). Note `rulefit_terms.csv`'s `importance` is the **raw** eq-(28)/(29)
+    value, *not* normalized to sum to 1 like `coefficients.csv`'s same-named
+    column, and that `model.joblib` here holds `{"model": rf}` alone — there are
+    no scalers to store.
+  - **`max_rules` is a soft cap.** Identical conjunctions are merged, so the
+    achieved count is lower: measured 315 rules from a 600 cap at Q=39 and 461 at
+    Q=100. `best.n_rules` is the real number.
+  - **The `leaves` column in `report.md` is blank on purpose.** That column counts
+    score registers in the OPM (`models.count_leaves`), and a deduplicated
+    interior-node rule is not one. `best.n_rules` and `best.n_nonzero_rules` are
+    this backend's size numbers.
+  - **It needs a validation split with HPO on**, unlike ridge: the study scores
+    the val tail, where `RidgeCV`'s GCV runs inside the rows it is handed.
+  - **Same duplicate-bit caveat as ridge's, for the same reason.** Near-duplicate
+    rules produce identical indicator columns and the lasso splits a coefficient
+    arbitrarily among them, so read the top of `rulefit_terms.csv` as a *group*.
+    With 80.3% of the aq_core kept bits exact copies of another bit this is the
+    normal case; `selection.selector=fsr` is the mitigation.
+  - **The collapse mode to watch for.** If `best.n_nonzero_terms` is 0 the model
+    predicts a constant, `rulefit_terms.csv` is header-only, and
+    `coefficients.csv`'s ranking silently degenerates to the Stage-1 MCP order
+    (its importances all being 0). The fit logs an error naming the knobs that
+    fix it.
+- **All four backends share** the features, MCP proxies, evaluation, plots and
   report format; they differ only in the estimator (`models.py`).
 
 ## Requirements
@@ -241,3 +341,12 @@ three in one pass.
 `xgboost`, `optuna`, `skglm` (genuine LR-MCP; falls back to sklearn Lasso if
 absent), `scikit-learn`, `pandas`, `pyarrow`/`zstandard` (zstd pkls), `matplotlib`,
 `joblib`, `pytest`.
+
+`--model rulefit` additionally needs the vendored RuleFit fork, which is a git
+submodule rather than a PyPI release:
+`git submodule update --init && pip install -e third_party/rulefit` (that also
+brings `ordered-set`, the fork's own easily-missed dependency). **Do not**
+`pip install rulefit` — the PyPI package of that name is a different, older
+codebase with no `RuleFitRegressor`, `allow_negative_coef` or
+`get_feature_importance`. The import is lazy, so the other three backends and
+both earlier stages work without it.

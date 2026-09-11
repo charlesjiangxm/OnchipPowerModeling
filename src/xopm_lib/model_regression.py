@@ -48,9 +48,10 @@ from typing import Any
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
 import pandas as pd
-from sklearn.metrics import r2_score as _sk_r2
+from sklearn.metrics import r2_score
 
 import xgboost as xgb
 import optuna
@@ -94,14 +95,6 @@ DEFAULT_MAX_RULES = 800           # keep at most this many rules (top by gain)
 # ===========================================================================
 # Metrics (ported from git f636ea9:x-opm/train.py -- masked MAPE + RMSE + R2)
 # ===========================================================================
-
-def r2_score(y: np.ndarray, yhat: np.ndarray) -> float:
-    y = np.asarray(y, float); yhat = np.asarray(yhat, float)
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    if ss_tot == 0:
-        return float("nan")
-    return float(_sk_r2(y, yhat))
-
 
 def mape_percent(y: np.ndarray, yhat: np.ndarray, eps_frac: float = 1e-3) -> float:
     y = np.asarray(y, float); yhat = np.asarray(yhat, float)
@@ -594,10 +587,16 @@ def plot_residual_panels(preds: dict[str, tuple[np.ndarray, np.ndarray]],
                              squeeze=False)
     for ax, split in zip(axes[0], order):
         y, yh = (np.asarray(a, float) * POWER_SCALE for a in preds[split])
-        idx = _subsample(len(y))
-        ax.scatter(y[idx], yh[idx], s=2, alpha=0.3, rasterized=True)
+        # hexbin density (log counts) -- with ~5e5 points a scatter saturates and
+        # hides where the mass actually sits
         lo = float(min(y.min(), yh.min())); hi = float(max(y.max(), yh.max()))
-        ax.plot([lo, hi], [lo, hi], color="r", lw=0.8, ls="--")   # y = x
+        pad = 0.02 * (hi - lo)
+        lo -= pad; hi += pad
+        hb = ax.hexbin(y, yh, gridsize=60, norm=LogNorm(vmin=1),
+                       extent=(lo, hi, lo, hi), cmap="viridis")
+        fig.colorbar(hb, ax=ax, label="count")
+        ax.plot([lo, hi], [lo, hi], color="r", lw=1, ls="--")   # y = x
+        ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
         ax.set_xlabel(f"true power ({POWER_UNIT})")
         ax.set_ylabel(f"predicted power ({POWER_UNIT})")
         ax.set_title(split)
@@ -985,7 +984,7 @@ def reconstruct_aqcore(ts_dir: str, modules=MODULES, win_size: int = 1) -> dict:
         log.warning("reconstruction: no overlap with true aq_core power"); return {}
 
     out = {}
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.4), squeeze=False)
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.8), squeeze=False)
     for ax, split in zip(axes[0], ("train", "test")):
         sub = merged[merged["split"].isin(
             ("train", "val") if split == "train" else ("test",))]
@@ -995,10 +994,16 @@ def reconstruct_aqcore(ts_dir: str, modules=MODULES, win_size: int = 1) -> dict:
         yh = sub["pred_sum"].to_numpy() * POWER_SCALE
         out[split] = metric_block(sub["aqcore_true"].to_numpy(),
                                   sub["pred_sum"].to_numpy())
-        idx = _subsample(len(y))
-        ax.scatter(y[idx], yh[idx], s=2, alpha=0.3, rasterized=True)
+        # hexbin density (log counts) -- with ~5e5 points a scatter saturates and
+        # hides where the mass actually sits
         lo = float(min(y.min(), yh.min())); hi = float(max(y.max(), yh.max()))
-        ax.plot([lo, hi], [lo, hi], color="r", lw=0.8, ls="--")   # y = x
+        pad = 0.02 * (hi - lo)
+        lo -= pad; hi += pad
+        hb = ax.hexbin(y, yh, gridsize=60, norm=LogNorm(vmin=1),
+                       extent=(lo, hi, lo, hi), cmap="viridis")
+        fig.colorbar(hb, ax=ax, label="count")
+        ax.plot([lo, hi], [lo, hi], color="r", lw=1, ls="--")   # y = x
+        ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
         ax.set_xlabel(f"true aq_core ({POWER_UNIT})")
         ax.set_ylabel(f"predicted aq_core ({POWER_UNIT})")
         ax.set_title(split)
@@ -1006,9 +1011,20 @@ def reconstruct_aqcore(ts_dir: str, modules=MODULES, win_size: int = 1) -> dict:
     fig.savefig(os.path.join(ts_dir, "aq_core_residual_train_test.png"), dpi=120)
     plt.close(fig)
 
+    # per-benchmark test breakdown (the pooled test R2 hides per-bench spread)
+    test_rows = merged[merged["split"] == "test"]
+    if len(test_rows):
+        out["test_by_bench"] = {
+            b: metric_block(g["aqcore_true"].to_numpy(), g["pred_sum"].to_numpy())
+            for b, g in test_rows.groupby("bench")}
+
     merged[["bench", "time_ns", "split", "pred_sum", "aqcore_true"]].to_csv(
         os.path.join(ts_dir, "aq_core_reconstruction.csv"), index=False)
-    log.info("aq_core reconstruction: %s", {k: round(v["r2"], 4) for k, v in out.items()})
+    log.info("aq_core reconstruction: %s",
+             {k: round(v["r2"], 4) for k, v in out.items() if k != "test_by_bench"})
+    for b, m in out.get("test_by_bench", {}).items():
+        log.info("aq_core reconstruction test[%s]: R2=%.4f MAPE=%.3f RMSE=%.3e",
+                 b, m["r2"], m["mape"], m["rmse"])
     return out
 
 
@@ -1031,6 +1047,14 @@ def write_top_report(ts_dir: str, results: list[dict], recon: dict) -> None:
             if s in recon:
                 m = recon[s]
                 lines.append(f"| {s} | {m['r2']:.4f} | {m['mape']:.3f} | {m['rmse']:.3e} |")
+        by_bench = recon.get("test_by_bench") or {}
+        if by_bench:
+            lines += ["", "### test split by benchmark", "",
+                      "| benchmark | R2 | MAPE% | RMSE |", "|---|---|---|---|"]
+            for b in sorted(by_bench):
+                m = by_bench[b]
+                lines.append(
+                    f"| {b} | {m['r2']:.4f} | {m['mape']:.3f} | {m['rmse']:.3e} |")
         lines += ["", "See `aq_core_residual_train_test.png` and "
                   "`aq_core_reconstruction.csv`."]
     else:

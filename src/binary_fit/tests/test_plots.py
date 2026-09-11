@@ -33,6 +33,25 @@ def _lines(ax, label):
     return [l for l in ax.lines if l.get_label() == label]
 
 
+def _panels(fig):
+    """The parity panels, skipping the colorbar axes each hexbin adds."""
+    return [ax for ax in fig.axes if ax.get_label() != "<colorbar>"]
+
+
+def _hex_weighted_centroid(ax):
+    """(x, y) count-weighted centre of a panel's hexbin, in mW.
+
+    The per-point offsets a scatter exposed are gone -- a hexbin only keeps bin
+    centres and counts -- so the centroid stands in: it still moves if the two
+    series are swapped, which is what the axis-order tests need.
+    """
+    hb = ax.collections[0]
+    xy = hb.get_offsets()
+    w = np.ma.filled(hb.get_array(), 0.0).astype(float)
+    return (float((xy[:, 0] * w).sum() / w.sum()),
+            float((xy[:, 1] * w).sum() / w.sum()))
+
+
 # --------------------------------------------------------------- pred_vs_time --
 def test_pred_vs_time_marks_interior_boundaries_at_slice_stops(tmp_path):
     """Boundaries sit at the slice STOPS, in dict order, last one suppressed.
@@ -174,11 +193,11 @@ def test_residual_panel_order_is_train_val_test(tmp_path):
     y, yhat = _trace()
     preds = {"test": (y, yhat), "train": (y, yhat), "val": (y, yhat)}
     fig = plots.plot_residual_panels(preds, tmp_path / "r.png", name="x")
-    assert [ax.get_title() for ax in fig.axes] == ["train", "val", "test"]
+    assert [ax.get_title() for ax in _panels(fig)] == ["train", "val", "test"]
 
     preds = {"train": (y, yhat), "val": (np.empty(0), np.empty(0)), "test": (y, yhat)}
     fig = plots.plot_residual_panels(preds, tmp_path / "r2.png", name="x")
-    assert [ax.get_title() for ax in fig.axes] == ["train", "test"]
+    assert [ax.get_title() for ax in _panels(fig)] == ["train", "test"]
 
 
 def test_residual_returns_none_when_every_split_is_empty(tmp_path, caplog):
@@ -194,10 +213,13 @@ def test_residual_x_is_the_label_and_y_is_the_prediction(tmp_path):
     """Catches an axis swap; the asymmetric yhat makes it detectable."""
     y, yhat = _trace()
     fig = plots.plot_residual_panels({"train": (y, yhat)}, tmp_path / "r.png", name="x")
-    ax = fig.axes[0]
-    off = ax.collections[0].get_offsets()
-    np.testing.assert_allclose(off[:, 0], y * 1000.0)
-    np.testing.assert_allclose(off[:, 1], yhat * 1000.0)
+    ax = _panels(fig)[0]
+    cx, cy = _hex_weighted_centroid(ax)
+    # yhat = 2y - 0.03 puts the two centroids far apart, so a swap is visible;
+    # the tolerance is one hex (the binning quantizes each point to a centre).
+    hex_w = (ax.get_xlim()[1] - ax.get_xlim()[0]) / 60.0
+    assert abs(cx - y.mean() * 1000.0) < hex_w
+    assert abs(cy - yhat.mean() * 1000.0) < hex_w
     assert ax.get_xlabel() == "true power (mW)"
     assert ax.get_ylabel() == "predicted power (mW)"
 
@@ -210,7 +232,7 @@ def test_residual_identity_line_spans_both_series(tmp_path):
     """
     y, yhat = _trace()
     fig = plots.plot_residual_panels({"train": (y, yhat)}, tmp_path / "r.png", name="x")
-    line = _lines(fig.axes[0], "_identity")[0]
+    line = _lines(_panels(fig)[0], "_identity")[0]
     xd, yd = line.get_xdata(), line.get_ydata()
     np.testing.assert_allclose(xd, yd)  # it really is y = x
     assert xd[0] <= min(y.min(), yhat.min()) * 1000.0
@@ -222,7 +244,7 @@ def test_residual_identity_line_is_visible_on_a_flat_split(tmp_path):
     flat = np.full(8, 0.050)
     fig = plots.plot_residual_panels({"train": (flat, flat)}, tmp_path / "r.png",
                                      name="x")
-    xd = _lines(fig.axes[0], "_identity")[0].get_xdata()
+    xd = _lines(_panels(fig)[0], "_identity")[0].get_xdata()
     assert xd[1] > xd[0]
 
 
@@ -235,8 +257,9 @@ def test_residual_drops_non_finite_pairs(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="binary_fit"):
         fig = plots.plot_residual_panels({"train": (y, yhat)}, tmp_path / "r.png",
                                          name="x")
-    ax = fig.axes[0]
-    assert ax.collections[0].get_offsets().shape == (_N - 2, 2)
+    ax = _panels(fig)[0]
+    # the hexbin counts, not the offsets: only the finite pairs were binned
+    assert np.ma.filled(ax.collections[0].get_array(), 0.0).sum() == _N - 2
     assert np.isfinite(_lines(ax, "_identity")[0].get_xdata()).all()
     assert any("non-finite" in r.getMessage() for r in caplog.records)
 
@@ -253,15 +276,16 @@ def test_residual_marks_in_sample_panels_with_their_reason(tmp_path):
     fig = plots.plot_residual_panels(
         preds, tmp_path / "hpo.png", name="x",
         in_sample={"train": "in HPO refit", "val": "in HPO refit"})
-    assert [ax.get_title() for ax in fig.axes] == [
+    assert [ax.get_title() for ax in _panels(fig)] == [
         "train (in HPO refit)", "val (in HPO refit)", "test"]
 
     fig = plots.plot_residual_panels(preds, tmp_path / "nohpo.png", name="x",
                                      in_sample={"train": "in-sample"})
-    assert [ax.get_title() for ax in fig.axes] == ["train (in-sample)", "val", "test"]
+    assert [ax.get_title() for ax in _panels(fig)] == ["train (in-sample)", "val",
+                                                       "test"]
 
     fig = plots.plot_residual_panels(preds, tmp_path / "plain.png", name="x")
-    assert [ax.get_title() for ax in fig.axes] == ["train", "val", "test"]
+    assert [ax.get_title() for ax in _panels(fig)] == ["train", "val", "test"]
 
 
 # ------------------------------------------------------------------- contracts --
@@ -286,3 +310,68 @@ def test_figures_are_written_as_real_pngs(tmp_path):
     plots.plot_residual_panels({"train": (y, yhat)}, tmp_path / "r.png", name="x")
     for f in ("t.png", "r.png"):
         assert (tmp_path / f).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --------------------------------------------------------------------------- #
+# plot_interaction_strength (rulefit)
+# --------------------------------------------------------------------------- #
+def _h_frame(values, features=("net_a", "net_b", "net_c")):
+    """The shape models.rulefit_interactions returns, without needing a fit."""
+    pd = pytest.importorskip("pandas")
+    values = list(values)
+    names = list(features)[:len(values)]
+    return pd.DataFrame({"feature": names, "H": values,
+                         "degenerate": [False] * len(values)})
+
+
+def test_interaction_strength_orders_bars_largest_first(tmp_path):
+    """barh draws bottom-up, so the labels must be ASCENDING in H.
+
+    Catches sorting descending (which would bury the strongest interaction at the
+    bottom of the figure) and catches not sorting at all -- the input frame here
+    is deliberately out of order.
+    """
+    out = tmp_path / "h.png"
+    fig = plots.plot_interaction_strength(_h_frame([0.3, 0.1, 0.2]), out, name="rulefit all")
+    ax = fig.axes[0]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["net_b", "net_c", "net_a"]
+    widths = [p.get_width() for p in ax.patches]
+    assert widths == sorted(widths)  # ascending bottom-up == largest on top
+    assert "rulefit all" in ax.get_title()
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_interaction_strength_writes_nothing_when_there_is_nothing_to_score(tmp_path):
+    """An empty frame is a real outcome, not an error: no file, no exception."""
+    out = tmp_path / "h.png"
+    assert plots.plot_interaction_strength(_h_frame([]), out, name="x") is None
+    assert not out.exists()
+    assert plots.plot_interaction_strength(None, out, name="x") is None
+    assert not out.exists()
+
+
+def test_interaction_strength_labels_a_purely_additive_fit(tmp_path):
+    """All-zero H means no interaction, which must still WRITE a labelled panel.
+
+    A silently missing figure is indistinguishable from a crash, and the artifact
+    set is asserted exactly by test_e2e -- so this case draws, and says why.
+    """
+    fig = plots.plot_interaction_strength(_h_frame([0.0, 0.0, 0.0]),
+                                          tmp_path / "h.png", name="x")
+    texts = [t.get_text() for t in fig.axes[0].texts]
+    assert any("no interaction" in t for t in texts)
+    assert (tmp_path / "h.png").exists()
+
+
+def test_interaction_strength_survives_a_non_finite_h(tmp_path, caplog):
+    """A NaN must not become a bar of NaN width; all-NaN writes nothing."""
+    out = tmp_path / "h.png"
+    fig = plots.plot_interaction_strength(_h_frame([0.3, float("nan"), 0.2]),
+                                          out, name="x")
+    widths = [p.get_width() for p in fig.axes[0].patches]
+    assert all(np.isfinite(w) for w in widths)
+    with caplog.at_level(logging.WARNING, logger="binary_fit"):
+        caplog.clear()
+        assert plots.plot_interaction_strength(
+            _h_frame([float("nan")] * 3), tmp_path / "n.png", name="x") is None
+    assert any("non-finite" in m for m in caplog.messages)

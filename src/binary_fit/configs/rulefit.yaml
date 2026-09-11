@@ -1,0 +1,171 @@
+# binary_fit — cp0 single-bit dataset (test = {conv_softmax, coremark}).
+# RuleFit (rule ensemble + sparse linear readout) fit variant. Paths are relative
+# to the repo root.
+#
+# Pipeline: --build_db reads `build.source_db_root/func/<module>/` and writes the
+# single-bit dataset to `build.out_root/func/`; --feature_select and --fit then
+# read `data.func_dir` / `data.pwr_dir` (which point at that materialized dataset).
+#
+# Everything above the `rulefit:` block is byte-identical to ridge.yaml on
+# purpose: this backend is meant to be read against ridge on exactly the same
+# proxy set and design matrix. Ridge already reaches test R² 0.9148 there
+# (Q=39, window 4), because at window_size > 1 every feature is a bit density and
+# window-mean power is close to additive — so what rulefit adds is not accuracy
+# but an auditable term list (`rulefit_terms.csv`), traceable to RTL nets.
+#
+# There is no `hpo:` block: the rule stage is searched by a small in-memory optuna
+# study that is never persisted, so its knobs live under `rulefit:` below rather
+# than in `hpo:` (whose contents are hashed into every tree study name).
+#
+# NB `fit_intercept: true` below DEVIATES from doc/spec/modeling-procedure.md,
+# which asks for no intercept. The reason is measured, not stylistic — see the
+# comment on that key.
+
+build:
+  source_db_root: dataset/c906_aq_core_1cyc_20260729   # raw per-cycle signal-state func pkls
+  modules: [aq_core]
+  out_root: dataset/c906_aq_core_singlebit_1cyc_20260901
+  drop_dead_bits: true                                 # drop globally constant-0/constant-1 bits
+
+data:
+  func_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/func   # materialized single-bit features
+  pwr_dir: dataset/c906_aq_core_singlebit_1cyc_20260901/pwr     # pre-populated (Pc(x_aq_core))
+  target: "Pc(x_aq_core)"
+  window_size: 4             # cycles averaged into ONE row before selection + fit
+                             # (features -> per-window bit densities, label -> mean
+                             #  power; 1 = per-cycle. eval knobs count these rows)
+  min_toggle_count: 1        # kept-bit lower floor, counted on the per-cycle bits
+
+split:
+  test_benchmarks: [conv_softmax, coremark]
+  val_fraction: 0.2          # required > 0 with HPO on: unlike ridge, this
+                             # backend's search scores the validation tail
+
+selection:                   # Stage 1: proxy selection (must match cobit.yaml)
+  selector: mcp              # LR-MCP, the prior art this baseline reproduces;
+                             # `selection.selector=fsr` for greedy forward
+                             # selection (exact Q, better held-out transfer)
+  gamma: 3.0                 # LOWER gamma reaches MORE proxies at a converged tol
+                             # (gamma->inf IS Lasso); "raise gamma" was backwards
+  tol: 1.0e-6                # NOT skglm's default 1e-4 -- that absolute tolerance
+                             # exceeds this problem's whole gradient scale
+                             # (alpha_max=1.8e-3) and pinned Q at 17
+  target_qs: [50]
+    # feature_select records the max-q set for --fit -q to slice
+  dedup_proxies: true
+  exact_q: true
+  resolve_cold: true         # warm-started sweep, cold re-solve of the reported alpha
+  kkt_report: true
+  q_tol: 0.10
+  max_bisect: 12
+  max_rows: 50000
+  grid_points: 30
+  grid_decades: 4.0
+  max_iter: 200              # dead configuration until tol is set
+
+rulefit:                     # Stage-2 rulefit. Defaults carry their measurements;
+                             # five of them deviate from the library's own, each
+                             # for a reason recorded in src/binary_fit/config.py
+  # -- rule stage (the fork's own sklearn GradientBoosting ensemble) --------
+  tree_size: 4
+  max_rules: 600             # SOFT cap and the HPO ceiling. The achieved count is
+                             # lower — measured 315 rules from a 600 cap at Q=39,
+                             # 461 at Q=100 — because identical conjunctions merge.
+                             # `best.n_rules` in result.json is the real number
+  memory_par: 0.01
+  exp_rand_tree_size: false  # library default TRUE, which adds trees ONE AT A TIME
+                             # under warm_start: measured 2.8 s vs 1.0 s for the
+                             # whole tree stage. False also fixes n_estimators
+  include_interior_rules: true
+                             # rules from every non-root node (paper eq. 8).
+                             # LOAD-BEARING while non_negative_coef is on: a
+                             # decreasing effect can only be expressed by a
+                             # sibling rule, since a linear term has no
+                             # complement. validate() rejects turning it off
+  # -- linear block ---------------------------------------------------------
+  lin_standardise: true
+  lin_trim_quantile: 0.0     # library default 0.025, which ANNIHILATES the linear
+                             # term of any bit non-zero in under 2.5% of rows:
+                             # winsor limits collapse to [0,0], std becomes 0, and
+                             # the design column is identically zero — deleting
+                             # exactly the rare high-power bits this backend is
+                             # for. Features are densities in [0,1], so there is
+                             # nothing to winsorize, and 0.0 also makes
+                             # rulefit_terms.csv's identity exact (1.1e-16)
+  # -- sparse readout (LassoCV) --------------------------------------------
+  fit_intercept: true        # library default FALSE. This target has a large
+                             # static/leakage floor (ridge's fitted intercept is
+                             # ~0.095 W against a y std of 0.0089, a ratio of ~11
+                             # against the library's own uncentred-target
+                             # threshold of 2.0). Forcing it to 0 alongside
+                             # non-negative coefficients made a historic x-opm run
+                             # underfit to a NEGATIVE R², and measured 8-80x
+                             # slower. Set false to follow the spec literally —
+                             # validate() then warns rather than refusing
+  non_negative_coef: true    # doc/spec/modeling-procedure.md:6, and the only
+                             # monotonicity guarantee available here: sklearn's
+                             # GradientBoosting has no monotone_constraints, but
+                             # with every term contributing non-negatively raising
+                             # a feature can never lower predicted power. Costs
+                             # something — ridge reaches 0.9148 on these proxies
+                             # using SIGNED coefficients — so `false` is the first
+                             # thing to try if the fit underperforms
+  n_alphas: 20               # length of LassoCV's alpha path. 20/1e-3/2000 rather
+  tol: 1.0e-3                # than the library's 100/1e-4/10000 is REQUIRED by
+  max_iter: 2000             # non_negative_coef, not an optimization: measured,
+                             # positive=True at the library's full solver effort
+                             # did not finish in 30 minutes on an 8616 x 560
+                             # design, against 51.8 s at these settings.
+                             # NB plain YAML needs a SIGNED exponent (1.0e-3);
+                             # an unsigned 1.0e3 parses as a string, which
+                             # validate() rejects with a message saying so
+  cv: 3
+  n_jobs: 1                  # LassoCV's CV folds only (0 -> sklearn's default).
+                             # The rule stage is single-threaded, so train.nthread
+                             # below does not reach it
+  # -- HPO (in-memory optuna over the rule stage; never persisted) ----------
+  hpo_n_trials: 12
+  hpo_n_jobs: 1
+  hpo_timeout_s: 1800.0      # HARD bound on the study (0 -> none). A full fit at
+                             # the real shape (68966 rows x 39 proxies) is minutes,
+                             # so an uncapped 12-trial search can run for hours.
+                             # Fit time is strongly data- and load-dependent — two
+                             # synthetic reproductions of that shape came out 50x
+                             # apart on this box — so run --no-hpo once and time it
+                             # before trusting any budget
+  hpo_rows: 20000            # seeded row cap PER TRIAL (0 -> all). The winner is
+                             # refit on every fitting row, and best.hpo_rows
+                             # records the gap
+  # -- cost guards ----------------------------------------------------------
+  fit_rows: 0                # seeded cap on the FINAL fit (0 -> every row). For
+                             # wall clock, NOT memory: the 69k x 39 fit peaked at
+                             # 1.0 GB RSS
+  predict_chunk: 50000       # rows per predict call. The design matrix is
+                             # n_rows x (Q + n_rules) float64 and several transient
+                             # copies exist. Measured at the real test shape
+                             # (509,062 rows x 39 linear + 600 rules): one
+                             # unchunked call peaks at 5.51 GB against 0.95 GB in
+                             # 50k batches, and batching is no slower (1.7 s vs
+                             # 2.0 s) — a 5.8x memory reduction for free
+  # -- Friedman H figure ----------------------------------------------------
+  h_top_k: 20                # features scored (0.3 s at 100 proxies, 2.0 s at 1000)
+  h_rows: 20000              # seeded row cap for the H computation (0 -> all)
+
+train:
+  nthread: 0                 # 0 -> all cores (unused by rulefit: the rule stage
+                             # is single-threaded and the lasso uses rulefit.n_jobs)
+  base_seed: 0
+
+eval:                        # NB: every window/row knob below counts ROWS, and one
+                             # row is data.window_size cycles (see README)
+  apet: [0.01, 0.03, 0.05]
+  peak_window: 100           # rows per peak-detection window
+  peak_sigma: 3.0
+  multicycle_windows: [8, 16, 32, 64, 128]
+  mape_eps_frac: 0.001
+
+runtime:
+  seed: 0
+  allow_tiny: false
+  output_dir: analysis/binary_fit
+  run_name: ""

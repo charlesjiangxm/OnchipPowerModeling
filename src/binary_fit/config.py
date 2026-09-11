@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from .utils import stable_hash
+from .utils import log, stable_hash
 
 
 @dataclass
@@ -160,6 +160,102 @@ class RidgeConfig:
 
 
 @dataclass
+class RuleFitConfig:
+    # Stage-2 rulefit backend (--model rulefit): a sparse linear model over
+    # [linear terms | rule indicators], Friedman & Popescu eq. (25), using the
+    # vendored fork in third_party/rulefit.
+    #
+    # These knobs are in their own section for exactly the reason RidgeConfig's
+    # are: hpo.study_stamp() hashes the WHOLE `hpo` section into every tree study
+    # name, and there are live analysis/.../cobit/tree/optuna.db files, so a new
+    # field in HpoConfig would rename those studies and silently orphan their
+    # trials (load_if_exists=True just starts fresh). HpoConfig's existing
+    # nn_n_trials/nn_n_jobs are history, not a precedent.
+    #
+    # -- rule stage (the fork's own sklearn GradientBoosting ensemble) ------
+    tree_size: int = 4
+    # SOFT cap, and the ceiling the HPO space is clamped to. The achieved count is
+    # lower: measured 315 rules from a 600 cap at Q=39 and 461 at Q=100, because
+    # Rule.__hash__ is order-insensitive over the conditions and dedups hard.
+    max_rules: int = 600
+    memory_par: float = 0.01
+    # The paper default (True) adds trees ONE AT A TIME under warm_start,
+    # reseeding each iteration; measured 2.8 s vs 1.0 s for the whole tree stage
+    # at max_rules=600, and False also makes n_estimators deterministic.
+    exp_rand_tree_size: bool = False
+    # Rules from every non-root node, paper eq. (8). LOAD-BEARING while
+    # non_negative_coef is on: a variable with a decreasing effect has to be
+    # rebuilt out of rules, and the sibling ("> split") rules are the only way to
+    # express one -- see the fork's own RuleFit docstring.
+    include_interior_rules: bool = True
+    # -- linear block ------------------------------------------------------
+    lin_standardise: bool = True
+    # 0.0, NOT the fork's 0.025. At 0.025 a bit that is non-zero in under 2.5% of
+    # rows gets winsor limits [0, 0], hence std 0, hence an identically-zero
+    # column in the design matrix -- its linear coefficient and its eq-(29)
+    # importance are silently forced to 0. That deletes precisely the rare
+    # high-power bits this backend exists to surface. Features here are window
+    # densities bounded in [0, 1], so there is nothing to winsorize, and 0.0 also
+    # makes rulefit_terms.csv's published identity exact (measured 1.1e-16).
+    lin_trim_quantile: float = 0.0
+    # -- sparse readout (LassoCV) ------------------------------------------
+    # The target has a large static/leakage floor (measured intercept ~0.095 W
+    # against a y std of 0.0089, a ratio of ~11 against the fork's own
+    # uncentred-target threshold of 2.0), so the intercept is FITTED even though
+    # doc/spec/modeling-procedure.md asks for none: forcing it to 0 alongside
+    # non-negative coefficients made a historic x-opm run underfit to a negative
+    # R2, and is 8-80x slower here. Set false to run the spec literally.
+    fit_intercept: bool = True
+    # doc/spec/modeling-procedure.md:6, and the only monotonicity guarantee
+    # available on this path -- sklearn's GradientBoosting has no
+    # monotone_constraints, but with every rule and linear term contributing
+    # non-negatively, raising any feature can never lower predicted power.
+    # Maps to the fork's allow_negative_coef = not this, passed EXPLICITLY:
+    # allow_negative_coef=None silently resolves to non-negative for regression.
+    non_negative_coef: bool = True
+    # Length of LassoCV's alpha path (-> the fork's Cs=<int>). MUST be an int: a
+    # SEQUENCE Cs is inverted to alphas = 1/Cs, which is meaningless here.
+    # 20/1e-3/2000 rather than the fork's 100/1e-4/10000 is not a micro-
+    # optimization but a requirement of non_negative_coef: measured, positive=True
+    # at the fork's full solver effort did not finish in 30 minutes on an
+    # 8616 x 560 design, against 51.8 s at these settings.
+    n_alphas: int = 20
+    cv: int = 3
+    tol: float = 1.0e-3
+    max_iter: int = 2000
+    n_jobs: int = 1  # CV folds only (0 -> None); the GB rule stage is single-threaded
+    # -- HPO (in-memory optuna over the rule stage; never persisted) --------
+    hpo_n_trials: int = 12
+    hpo_n_jobs: int = 1
+    # HARD wall-clock bound on study.optimize (0 -> none). A full fit at the real
+    # shape (68,966 rows x 39 proxies, max_rules 600) is minutes, not seconds, so
+    # an uncapped 12-trial search can run for hours. Fit time is strongly
+    # data- and load-dependent: two synthetic reproductions of that shape came out
+    # 50x apart on this box (8.5 s and 448 s at 20k rows), so treat any single
+    # number as indicative and measure with --no-hpo before trusting a budget.
+    hpo_timeout_s: float = 1800.0
+    # Seeded row cap PER TRIAL (0 -> every row); the winning configuration is
+    # refit on every fitting row, and best.hpo_rows records the gap.
+    hpo_rows: int = 20_000
+    # -- cost guards -------------------------------------------------------
+    # Seeded cap on the FINAL fit (0 -> every row). This exists for wall clock,
+    # NOT memory: a 69k x 39 fit peaks well under 1 GB RSS.
+    fit_rows: int = 0
+    # Rows per predict call. The design matrix is n_rows x (Q + n_rules) float64
+    # and several copies exist transiently (Winsorizer.trim, RuleEnsemble.transform,
+    # _design_matrix). Measured through _fit_rulefit at the real test shape --
+    # 509,062 rows against 39 linear + 600 rule terms -- one unchunked call peaks
+    # at 5.51 GB where 50k batches peak at 0.95 GB, and batching is no slower
+    # (1.7 s vs 2.0 s). So this is a 5.8x memory reduction for free. It is also
+    # where the n == 0 guard lives, which is not optional: run._run_one scores
+    # splits["test"] whether or not it has rows.
+    predict_chunk: int = 50_000
+    # -- Friedman H figure -------------------------------------------------
+    h_top_k: int = 20  # features scored; cost scales with this (0.3 s .. 2.0 s measured)
+    h_rows: int = 20_000  # seeded row cap for the H computation (0 -> all)
+
+
+@dataclass
 class TrainConfig:
     nthread: int = 0  # 0 -> xgboost default (all cores)
     base_seed: int = 0
@@ -190,6 +286,7 @@ class Config:
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     hpo: HpoConfig = field(default_factory=HpoConfig)
     ridge: RidgeConfig = field(default_factory=RidgeConfig)
+    rulefit: RuleFitConfig = field(default_factory=RuleFitConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -237,6 +334,111 @@ class Config:
                 f"max_rows={r.max_rows!r}"
             )
 
+        self._validate_rulefit()
+
+    def _validate_rulefit(self) -> None:
+        """Guard the ``rulefit:`` section, each check for the message it replaces.
+
+        Every one of these otherwise surfaces minutes into a fit as an opaque
+        error from inside sklearn or the fork -- or, worse, as a quietly wrong
+        model. The type checks are not pedantry: plain YAML needs a SIGNED
+        exponent, so ``tol: 1.0e-3`` loads as the *string* ``"1.0e-3"`` and would
+        otherwise only fail much later inside the solver.
+        """
+        r = self.rulefit
+        # counts and row budgets must be integers -- reject rather than coerce,
+        # the same argument as data.window_size above
+        ints = {"tree_size": r.tree_size, "max_rules": r.max_rules,
+                "n_alphas": r.n_alphas, "cv": r.cv, "max_iter": r.max_iter,
+                "n_jobs": r.n_jobs, "hpo_n_trials": r.hpo_n_trials,
+                "hpo_n_jobs": r.hpo_n_jobs, "hpo_rows": r.hpo_rows,
+                "fit_rows": r.fit_rows, "predict_chunk": r.predict_chunk,
+                "h_top_k": r.h_top_k, "h_rows": r.h_rows}
+        floats = {"memory_par": r.memory_par, "lin_trim_quantile": r.lin_trim_quantile,
+                  "tol": r.tol, "hpo_timeout_s": r.hpo_timeout_s}
+        for key, value in ints.items():
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"rulefit.{key} must be an integer, got {value!r} "
+                                 f"(a YAML exponent needs a sign: 1.0e+4, not 1.0e4)")
+        for key, value in floats.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"rulefit.{key} must be a number, got {value!r} "
+                                 f"(a YAML exponent needs a sign: 1.0e-3 or 1.0e+3, "
+                                 f"not 1.0e3)")
+        bools = {"exp_rand_tree_size": r.exp_rand_tree_size,
+                 "include_interior_rules": r.include_interior_rules,
+                 "lin_standardise": r.lin_standardise,
+                 "fit_intercept": r.fit_intercept,
+                 "non_negative_coef": r.non_negative_coef}
+        for key, value in bools.items():
+            # a stray string must not become truthy: `fit_intercept: "no"` is True
+            if not isinstance(value, bool):
+                raise ValueError(f"rulefit.{key} must be true or false, got {value!r}")
+
+        if r.n_alphas < 1:
+            raise ValueError(
+                f"rulefit.n_alphas must be an integer >= 1, got {r.n_alphas!r}. It "
+                f"becomes the fork's Cs, and an int there means 'alpha path length' "
+                f"while a sequence would be inverted to alphas = 1/Cs"
+            )
+        # 2 leaves is the smallest tree that yields a rule at all; the
+        # exp_rand_tree_size path draws Exp(tree_size - 2), so 2 is a zero scale
+        if r.tree_size < 2 or (r.exp_rand_tree_size and r.tree_size < 3):
+            raise ValueError(
+                f"rulefit.tree_size must be >= 2, and >= 3 when "
+                f"rulefit.exp_rand_tree_size is on (it draws Exp(tree_size - 2)), "
+                f"got tree_size={r.tree_size!r} exp_rand_tree_size={r.exp_rand_tree_size!r}"
+            )
+        # max_rules 0 -> n_estimators 0 -> an InvalidParameterError from inside
+        # the sklearn tree stage, which says nothing about this config key
+        checks = [
+            (r.max_rules >= 1, "max_rules", r.max_rules, ">= 1"),
+            (r.cv >= 2, "cv", r.cv, ">= 2 (it is a K-fold split)"),
+            (r.max_iter >= 1, "max_iter", r.max_iter, ">= 1"),
+            (r.tol > 0, "tol", r.tol, "> 0"),
+            (0.0 <= r.memory_par <= 1.0, "memory_par", r.memory_par, "in [0, 1]"),
+            (0.0 <= r.lin_trim_quantile < 0.5, "lin_trim_quantile",
+             r.lin_trim_quantile, "in [0, 0.5)"),
+            (r.hpo_n_trials >= 1, "hpo_n_trials", r.hpo_n_trials, ">= 1"),
+            (r.hpo_n_jobs >= 1, "hpo_n_jobs", r.hpo_n_jobs, ">= 1"),
+            (r.hpo_timeout_s >= 0, "hpo_timeout_s", r.hpo_timeout_s,
+             ">= 0 (0 -> no timeout)"),
+            (r.hpo_rows >= 0, "hpo_rows", r.hpo_rows, ">= 0 (0 -> every row)"),
+            (r.fit_rows >= 0, "fit_rows", r.fit_rows, ">= 0 (0 -> every row)"),
+            (r.predict_chunk >= 1, "predict_chunk", r.predict_chunk, ">= 1"),
+            (r.h_top_k >= 1, "h_top_k", r.h_top_k, ">= 1"),
+            (r.h_rows >= 0, "h_rows", r.h_rows, ">= 0 (0 -> every row)"),
+        ]
+        for ok, key, value, want in checks:
+            if not ok:
+                raise ValueError(f"rulefit.{key} must be {want}, got {value!r}")
+
+        # A non-negative model expresses a DECREASING effect only through a rule
+        # on the other side of a split: a linear term has no complement, so a
+        # negative-slope variable drops out of the linear block entirely. Without
+        # the interior (sibling) rules there is no such rule to fall back on.
+        if r.non_negative_coef and not r.include_interior_rules:
+            raise ValueError(
+                "rulefit.include_interior_rules must stay true while "
+                "rulefit.non_negative_coef is true: a non-negative fit can only "
+                "represent a decreasing effect through a sibling rule, because a "
+                "linear term has no complement. Set non_negative_coef: false to "
+                "allow signed coefficients instead."
+            )
+        # Warn rather than raise: this IS the doc/spec/modeling-procedure.md
+        # combination, so it has to stay reachable -- but it is also exactly the
+        # case the fork's own collapse warning has a special message for, and the
+        # evidence says it fits badly here.
+        if r.non_negative_coef and not r.fit_intercept:
+            log.warning(
+                "rulefit: non_negative_coef with fit_intercept=false is the "
+                "doc/spec combination, but with no intercept and no negative "
+                "coefficients the fit cannot go below 0 on a non-negative design, "
+                "so an all-zero model can win cross-validation. Measured on this "
+                "target (static floor ~0.095 W): 8-80x slower and a historic x-opm "
+                "run underfit to a negative R2. Watch best.n_nonzero_terms."
+            )
+
     # -- serialization / hashing -------------------------------------------
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -281,6 +483,7 @@ _SECTION_TYPES = {
     ("Config", "selection"): SelectionConfig,
     ("Config", "hpo"): HpoConfig,
     ("Config", "ridge"): RidgeConfig,
+    ("Config", "rulefit"): RuleFitConfig,
     ("Config", "train"): TrainConfig,
     ("Config", "eval"): EvalConfig,
     ("Config", "runtime"): RuntimeConfig,

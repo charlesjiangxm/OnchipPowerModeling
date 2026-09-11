@@ -1,4 +1,4 @@
-"""Hyperparameter optimization for both Stage-2 backends.
+"""Hyperparameter optimization for the Stage-2 backends.
 
 * tree: multi-objective Optuna study minimizing (validation MAPE %, total leaf
   count) at a fixed boosting-round count R. NSGA-II/III, TPE or Random samplers;
@@ -7,6 +7,12 @@
   the Best Trial nearest the leaf budget T_th (:func:`pick_best_trial`).
 * nn: single-objective Optuna study maximizing validation R2 over the MLP's
   hidden width, L2 alpha and learning rate (:func:`run_nn_study`).
+* rulefit: single-objective Optuna study maximizing validation R2 over the rule
+  stage's (tree_size, max_rules, memory_par) (:func:`run_rulefit_study`), with a
+  hard wall-clock timeout. Unnamed and unpersisted on purpose, so
+  :func:`study_stamp` is never involved -- see that function's docstring.
+* ridge does not appear here at all: its alpha comes from RidgeCV's leave-one-out
+  generalized CV inside the fitting rows.
 """
 
 from __future__ import annotations
@@ -67,7 +73,14 @@ def non_dominated(points: np.ndarray) -> np.ndarray:
 # study identity
 # --------------------------------------------------------------------------- #
 def study_stamp(cfg: Config, col_ids) -> str:
-    """Identity of everything a study's objectives depend on (folded into names)."""
+    """Identity of everything a study's objectives depend on (folded into names).
+
+    Note which sections are listed: a new top-level section (``ridge:``,
+    ``rulefit:``) is NOT hashed, which is exactly why those backends keep their
+    knobs in one. Adding a field to ``hpo`` instead renames every tree study and
+    orphans the trials already in an existing ``analysis/.../tree/*/optuna.db``,
+    silently -- ``load_if_exists=True`` just starts fresh.
+    """
     return stable_hash(
         {
             "config": cfg.stage_hash("data", "split", "selection", "hpo", "train", "eval"),
@@ -221,3 +234,68 @@ def run_nn_study(Xtr, y_train, Xval, y_val, n_trials: int, n_jobs: int, seed: in
     bp = study.best_params
     return {"hidden": int(bp["hidden"]), "alpha": float(bp["alpha"]),
             "lr": float(bp["lr"]), "val_r2": float(study.best_value)}
+
+
+# --------------------------------------------------------------------------- #
+# rulefit HPO study
+# --------------------------------------------------------------------------- #
+def run_rulefit_study(rf_cfg, Xtr, y_train, Xval, y_val, names, seed: int) -> dict:
+    """Maximize validation R2 over (tree_size, max_rules, memory_par).
+
+    The ``run_nn_study`` shape -- in-memory, unnamed, single-objective TPE -- with
+    two additions the rulefit cost makes necessary:
+
+    * ``timeout``. One full fit measured 448.5 s at 68,966 rows x 39 proxies, so
+      an uncapped search runs for hours with nothing to point at.
+    * the no-completed-trials guard that ``_fit_tree`` has and ``run_nn_study``
+      lacks. Without it a study whose every trial errored or was cut short by the
+      timeout fails in ``study.best_params`` with a bare ``ValueError``.
+
+    The objective scores the COMPLETE RuleFit, not just its booster the way
+    ``src/xopm_lib/model_regression.py`` does. That shortcut buys nothing here:
+    the tree stage is ~1 s of a 448 s fit, so skipping the lasso would save
+    almost none of the cost while tuning a model that is never shipped.
+
+    Single-objective, with ``max_rules`` merely capped rather than a second
+    objective, because the deployed cost is the NON-ZERO term count -- which the
+    lasso already minimizes (measured 39 linear + 75 rules out of a 354-column
+    design). The per-trial ``n_rules`` / ``n_nonzero_terms`` user attributes keep
+    that trade-off readable; ``non_dominated`` above is the upgrade path if the
+    measured curve turns out steep.
+    """
+    # Imported inside the function, like run_nn_study's own models import: the
+    # rulefit fork must stay lazy, so it must not join the module-level list.
+    from .models import (
+        fit_rulefit,
+        make_rulefit,
+        rulefit_predict,
+        suggest_rulefit_params,
+    )
+
+    def objective(trial):
+        params = suggest_rulefit_params(trial, rf_cfg.max_rules)
+        rf = fit_rulefit(make_rulefit(rf_cfg, seed, **params), Xtr, y_train, names)
+        trial.set_user_attr("n_rules", int(rf.n_rules_))
+        trial.set_user_attr("n_nonzero_terms", int((np.asarray(rf.coef_) != 0).sum()))
+        return r2_score(y_val, rulefit_predict(rf, Xval, rf_cfg.predict_chunk))
+
+    study = optuna.create_study(
+        direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed)
+    )
+    t0 = time.time()
+    study.optimize(objective, n_trials=rf_cfg.hpo_n_trials,
+                   n_jobs=rf_cfg.hpo_n_jobs,
+                   timeout=(float(rf_cfg.hpo_timeout_s) or None))
+    runtime = time.time() - t0
+    done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not done:
+        raise RuntimeError(
+            f"rulefit HPO produced no completed trials in {runtime:.0f}s "
+            f"(rulefit.hpo_timeout_s={rf_cfg.hpo_timeout_s} too small for a fit "
+            f"this size, or every trial errored -- check the logged warnings)"
+        )
+    bp = study.best_params
+    return {"tree_size": int(bp["tree_size"]), "max_rules": int(bp["max_rules"]),
+            "memory_par": float(bp["memory_par"]),
+            "val_r2": float(study.best_value), "n_trials": len(done),
+            "hpo_runtime_s": float(runtime)}

@@ -1,4 +1,5 @@
-"""Figures written after a fit: parity panels, prediction traces, the Q sweep.
+"""Figures written after a fit: parity panels, prediction traces, the Q sweep,
+and the rulefit backend's Friedman interaction strengths.
 
 Rendering lives apart from ``evaluate.py`` (the metric protocol) so importing
 the metrics never pulls in matplotlib. Every function takes raw arrays, writes
@@ -41,6 +42,13 @@ def _plt():
     import matplotlib.pyplot as plt
 
     return plt
+
+
+def _log_norm():
+    """``matplotlib.colors.LogNorm``, imported lazily like ``_plt``."""
+    from matplotlib.colors import LogNorm
+
+    return LogNorm
 
 
 def _style_axis(ax) -> None:
@@ -174,7 +182,7 @@ def plot_residual_panels(
     such, which is why the reason is printed rather than implied.
 
     The frame stays plain (no ``_style_axis``): a parity cloud is read against a
-    closed box, and a grid under a dense translucent scatter only muddies it.
+    closed box, and a grid under the hexbin density only muddies it.
     """
     plt = _plt()
     in_sample = in_sample or {}
@@ -190,18 +198,26 @@ def plot_residual_panels(
         y, yhat, ok = _finite_pair(*preds[split], f"residual [{name} | {split}]")
         panels.append((split, y[ok], yhat[ok]))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, len(panels), figsize=(5 * len(panels), 4.2),
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.7 * len(panels), 4.4),
                              squeeze=False)
     try:
         for ax, (split, y, yhat) in zip(axes[0], panels):
-            ax.scatter(y, yhat, s=2, alpha=0.3, color=_BLUE)
             lo = float(min(y.min(), yhat.min())) if y.size else 0.0
             hi = float(max(y.max(), yhat.max())) if y.size else 1.0
             span = hi - lo
             # pad so the line stays visible on a split whose power is flat
             pad = 0.05 * span if span > 0 else max(abs(hi) * 0.05, 1e-9)
-            ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=_RED,
-                    linewidth=0.9, linestyle="--", label="_identity")  # y = x
+            lo, hi = lo - pad, hi + pad
+            # hexbin on log counts, not a translucent scatter: a test split is
+            # ~5e5 cycles, where a scatter saturates and the where-the-mass-sits
+            # question the parity map exists to answer stops being readable.
+            hexes = ax.hexbin(y, yhat, gridsize=60, norm=_log_norm()(vmin=1),
+                              extent=(lo, hi, lo, hi), cmap="viridis")
+            fig.colorbar(hexes, ax=ax, label="count")
+            ax.plot([lo, hi], [lo, hi], color=_RED,
+                    linewidth=1.0, linestyle="--", label="_identity")  # y = x
+            ax.set_xlim(lo, hi)
+            ax.set_ylim(lo, hi)
             ax.set_xlabel(f"true power ({POWER_UNIT})")
             ax.set_ylabel(f"predicted power ({POWER_UNIT})")
             note = in_sample.get(split)
@@ -243,6 +259,56 @@ def plot_q_sweep(records: list[dict], out_path: Path):
         else:
             unit = f"Mixed-window ({sorted(windows)})"
         fig.suptitle(f"{unit} accuracy vs proxy count", fontsize=11)
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+    finally:
+        plt.close(fig)
+    return fig
+
+
+def plot_interaction_strength(h, out_path: Path, *, name: str):
+    """Friedman's overall H-statistic per feature, largest first (rulefit only).
+
+    ``h`` is the frame :func:`models.rulefit_interactions` returns -- the fork's
+    ``interaction_strength`` output, with ``feature``, ``H`` and ``degenerate``
+    columns. H is a RANKING only: the paper's significance reference needs a
+    parametric bootstrap null the fork does not implement, so the axis label says
+    so rather than inviting a threshold.
+
+    Drawn here rather than through the fork's own ``plot_interaction_strength``,
+    which imports pyplot itself and would create a figure this package does not
+    own -- the autouse ``_no_leaked_figures`` fixture exists to catch exactly that.
+
+    An all-zero or all-degenerate frame is a real outcome (a purely additive fit
+    has no interactions to show), so it draws a labelled empty panel instead of
+    nothing: a silently missing file would be indistinguishable from a crash.
+    """
+    plt = _plt()
+    if h is None or not len(h):
+        log.info("interaction strength: nothing to draw (no features scored)")
+        return None
+    feats = [str(f) for f in h["feature"]]
+    vals = np.asarray(h["H"], dtype=np.float64)
+    ok = np.isfinite(vals)
+    if not ok.any():
+        log.warning("interaction strength: every H is non-finite")
+        return None
+    vals = np.where(ok, vals, 0.0)
+    order = np.argsort(vals)  # barh draws bottom-up, so ascending = largest on top
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8, max(2.4, 0.28 * len(feats) + 1.0)))
+    try:
+        ax.barh(range(len(order)), vals[order], color=_BLUE, height=0.7)
+        ax.set_yticks(range(len(order)))
+        ax.set_yticklabels([feats[i] for i in order], fontsize=7)
+        ax.set_xlabel("Friedman H (a ranking; the fork implements no null distribution)")
+        _style_axis(ax)
+        if float(vals.max()) <= 0.0:
+            # a purely additive model: keep the panel, say why it is blank
+            ax.text(0.5, 0.5, "no interaction detected\n(every H is 0)",
+                    transform=ax.transAxes, ha="center", va="center", fontsize=10,
+                    color="#666666")
+        ax.set_title(f"{name} | interaction strength (top {len(feats)})", fontsize=11)
         fig.tight_layout()
         fig.savefig(out_path, dpi=150)
     finally:

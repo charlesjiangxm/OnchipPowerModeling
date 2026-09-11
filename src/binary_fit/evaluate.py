@@ -19,6 +19,7 @@ are in units of those rows (t rows = t * window_size cycles).
 from __future__ import annotations
 
 import numpy as np
+from sklearn.metrics import r2_score as sk_r2_score
 
 from .config import Config
 from .utils import log
@@ -40,11 +41,19 @@ def mape_percent(
 
 
 def r2_score(y: np.ndarray, yhat: np.ndarray) -> float:
+    """sklearn's coefficient of determination, 1 - SSE/SST about mean(y).
+
+    Delegates to ``sklearn.metrics.r2_score`` so the number is the library's by
+    construction. Two guards around it: sklearn raises on fewer than two
+    samples, and its constant-y convention (0.0, or 1.0 on an exact fit) is a
+    score for a total variance of zero, so both cases report NaN instead -- the
+    metric is undefined there and NaN keeps it out of best-model comparisons.
+    """
     y = np.asarray(y, dtype=float)
     yhat = np.asarray(yhat, dtype=float)
-    ss_res = float(np.sum((y - yhat) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    return float("nan") if ss_tot == 0 else 1.0 - ss_res / ss_tot
+    if y.size < 2 or float(np.sum((y - y.mean()) ** 2)) == 0.0:
+        return float("nan")
+    return float(sk_r2_score(y, yhat))
 
 
 def apet_success_rates(

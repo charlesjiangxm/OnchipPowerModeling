@@ -1,6 +1,6 @@
-"""Stage-2 regressors: gradient-boosted trees (XGBoost) and a two-layer MLP.
+"""Stage-2 regressors: gradient-boosted trees, a two-layer MLP, ridge and RuleFit.
 
-Both consume the same binary MCP-selected proxies and are directly comparable.
+All four consume the same binary MCP-selected proxies and are directly comparable.
 
 * ``tree`` -- XGBoost mapping of the paper's Table II: squared-error objective,
   ``hist`` + ``lossguide`` growth bounded by ``max_leaves`` (the hardware cost
@@ -20,15 +20,28 @@ Both consume the same binary MCP-selected proxies and are directly comparable.
   the penalty is what makes the solve well-posed at all. Alpha comes from
   ``RidgeCV``'s leave-one-out generalized CV over the fitting rows, not from an
   optuna study on the validation tail -- see :func:`fit_ridge_scaled`.
+* ``rulefit`` -- a sparse linear model over ``[linear terms | rule indicators]``
+  (Friedman & Popescu eq. 25), from the vendored fork in ``third_party/rulefit``.
+  Its selling point here is an auditable term list, not accuracy: ridge already
+  reaches test R2 0.9148 on these proxies, because at ``data.window_size > 1``
+  every feature is a bit density and window-mean power is nearly additive. The
+  rule stage is the fork's OWN sklearn ``GradientBoostingRegressor``, measured at
+  ~1 s of a 448 s fit at 68,966 rows x 39 proxies -- so the stage an XGBoost/DART
+  bridge would replace is under 1% of the cost, and going library-native keeps
+  the fork's tested ``fit``/``predict``/``get_rules``/``get_feature_importance``.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import xgboost as xgb
 from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
+
+from .utils import log
 
 # =========================================================================== #
 # tree backend (XGBoost)
@@ -331,3 +344,285 @@ def ridge_coefficients(model, xs: StandardScaler, ys: StandardScaler):
     coef_watts = w * y_scale / x_scale
     intercept_watts = y_mean + y_scale * b - float(coef_watts @ x_mean)
     return w, coef_watts, intercept_watts
+
+
+# =========================================================================== #
+# rulefit backend (rule ensemble + sparse linear model)
+# =========================================================================== #
+def _import_rulefit():
+    """The vendored fork in ``third_party/rulefit``, imported LAZILY.
+
+    It is a git submodule plus an editable install, not a PyPI package, so a
+    module-level import would break ``--build_db``, ``--feature_select`` and
+    ``--model tree|nn|ridge`` on any checkout that never ran the install. Every
+    rulefit entry point below routes through here.
+    """
+    try:
+        from rulefit import RuleFitRegressor
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise ImportError(
+            "the rulefit backend needs the vendored fork: "
+            "`git submodule update --init && pip install -e third_party/rulefit`. "
+            "It is NOT the PyPI package of the same name, which has no "
+            "RuleFitRegressor, allow_negative_coef or get_feature_importance "
+            "(and `ordered-set` is the fork's own easily-missed dependency)."
+        ) from exc
+    return RuleFitRegressor
+
+
+# Search space for the rule stage: (low, high, log-scale). Only the three knobs
+# that change the rule/linear balance this backend exists to expose. Deliberately
+# NOT searched: n_alphas/cv/tol/max_iter are cost knobs (a longer alpha path
+# cannot score worse, so searching it makes trials incomparable);
+# lin_trim_quantile/lin_standardise change what the published coefficients MEAN;
+# fit_intercept/non_negative_coef are modelling decisions settled in the config;
+# sample_fract stays at the paper's default (the only O(n) lever in the tree
+# stage, resolving to 0.024 at n=68,966).
+RULEFIT_SPACE = {
+    "tree_size": (2, 8, False),  # int
+    "max_rules": (100, 1200, True),  # int, log; clamped to rulefit.max_rules
+    "memory_par": (1e-3, 0.3, True),
+}
+_RULEFIT_INT_PARAMS = {"tree_size", "max_rules"}
+
+# Fixed rule-stage point for --no-hpo (mid-space, matching the config defaults).
+NOHPO_RULEFIT: dict = {"tree_size": 4, "max_rules": 600, "memory_par": 0.01}
+
+
+def suggest_rulefit_params(trial, max_rules_cap: int) -> dict:
+    """Sample one rule-stage configuration, respecting ``rulefit.max_rules``.
+
+    Mirrors :func:`suggest_params`. ``max_rules`` is clamped to the configured
+    cap so a trial can never grow a bigger ensemble than the final fit is allowed
+    to; ``lo = min(lo, hi)`` keeps the range from inverting when the cap sits
+    below the space's own floor.
+    """
+    params = {}
+    for name, (lo, hi, log) in RULEFIT_SPACE.items():
+        if name == "max_rules":
+            hi = min(int(hi), int(max_rules_cap))
+            lo = min(int(lo), hi)
+        if name in _RULEFIT_INT_PARAMS:
+            params[name] = trial.suggest_int(name, int(lo), int(hi), log=log)
+        else:
+            params[name] = trial.suggest_float(name, lo, hi, log=log)
+    return params
+
+
+def make_rulefit(rf_cfg, seed: int, **overrides):
+    """The SINGLE ``rulefit:`` config -> constructor mapping.
+
+    Both the HPO trials and the final fit go through here, so they cannot drift
+    apart. Three translations live only in this function:
+
+    * ``n_jobs: 0`` -> ``None`` (sklearn's "unset"), matching how ``0`` means
+      "everything" elsewhere in this package;
+    * ``n_alphas: <int>`` -> ``Cs=<int>``, which the fork reads as the length of
+      the alpha path. A *sequence* ``Cs`` would instead be inverted to
+      ``alphas = 1/Cs``, which is meaningless for this problem -- hence the
+      integer guard in ``Config._validate_rulefit``;
+    * ``non_negative_coef`` -> ``allow_negative_coef=not it``, passed as an
+      explicit bool. ``allow_negative_coef=None`` silently resolves to
+      non-negative for regression, so leaving it unset would hide the decision.
+
+    ``penalty`` stays ``"l1"`` rather than becoming a knob: the elastic-net ridge
+    term is not scale-neutral across rules (it shrinks a rule of support ``s`` as
+    ``1/s`` against L1's ``1/sqrt(s(1-s))``), which puts a support-dependent bias
+    into the very eq-(28) importances the term table is ranked by.
+    """
+    RuleFitRegressor = _import_rulefit()
+    params = {"tree_size": rf_cfg.tree_size, "max_rules": rf_cfg.max_rules,
+              "memory_par": rf_cfg.memory_par}
+    params.update(overrides)
+    return RuleFitRegressor(
+        rfmode="regress",
+        model_type="rl",
+        penalty="l1",
+        tree_size=int(params["tree_size"]),
+        max_rules=int(params["max_rules"]),
+        memory_par=float(params["memory_par"]),
+        exp_rand_tree_size=bool(rf_cfg.exp_rand_tree_size),
+        include_interior_rules=bool(rf_cfg.include_interior_rules),
+        lin_standardise=bool(rf_cfg.lin_standardise),
+        lin_trim_quantile=float(rf_cfg.lin_trim_quantile),
+        fit_intercept=bool(rf_cfg.fit_intercept),
+        allow_negative_coef=not bool(rf_cfg.non_negative_coef),
+        Cs=int(rf_cfg.n_alphas),
+        cv=int(rf_cfg.cv),
+        tol=float(rf_cfg.tol),
+        max_iter=int(rf_cfg.max_iter),
+        n_jobs=(None if int(rf_cfg.n_jobs) == 0 else int(rf_cfg.n_jobs)),
+        random_state=int(seed),
+    )
+
+
+def fit_rulefit(rf, X, y, names):
+    """Fit ``rf`` on ``(X, y)`` with ``names`` as the feature names.
+
+    The length check comes first because ``RuleFit.fit`` stores ``feature_names``
+    with no validation of its own, and a mismatch then surfaces minutes later as
+    an opaque pandas error from inside ``get_feature_importance``. This fit costs
+    minutes on the real data; nothing about it should fail late.
+
+    Warnings are recorded and re-logged rather than suppressed. ``XGBRuleFit.fit``
+    in ``src/xopm_lib/model_regression.py`` wraps its solve in
+    ``simplefilter("ignore")``, which also hides the fork's own
+    "Every coefficient of the fitted linear model is zero" warning -- the one
+    warning that means the published model is a constant.
+    """
+    names = list(names)
+    if len(names) != int(X.shape[1]):
+        raise ValueError(f"rulefit: {len(names)} feature names for "
+                         f"{X.shape[1]} columns")
+    y = np.asarray(y, dtype=np.float64).ravel()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rf.fit(X, y, feature_names=names)
+    for w in caught:
+        log.warning("rulefit: %s: %s", w.category.__name__, w.message)
+    return rf
+
+
+def rulefit_importance(rf, n_features: int) -> np.ndarray:
+    """Per-input importance, Friedman & Popescu eq. (35).
+
+    Each rule's eq-(28) importance is shared equally among the variables its
+    conditions reference, plus that variable's own eq-(29) linear importance. The
+    variables are read off ``Rule.defining_variables()``, never string-matched
+    against the rule text -- the bug that once let ``feature_1`` collect
+    ``feature_10``'s importance.
+
+    ``_linear_importances`` alone would have been the wrong choice: it ignores
+    every rule, so a bit that survives only inside conjunctions would read as
+    unimportant, which is backwards for a rule model.
+
+    The shape and sign are ASSERTED rather than trusted, because the failure is
+    silent and then fatal: ``utils.save_coefficients_csv`` is called from
+    ``run._run_one`` *after* ``model.joblib`` and ``rulefit_terms.csv`` are on
+    disk but *before* ``result.json``, so a wrong length there kills every later
+    ``-q`` and ``--model`` and leaves a directory ``_aggregate`` skips entirely.
+    No ``abs()`` and no ``clip()``: an upstream change must fail a test, not be
+    masked.
+    """
+    imp = np.asarray(rf.get_feature_importance()["importance"],
+                     dtype=np.float64).ravel()
+    if imp.shape != (int(n_features),):
+        raise ValueError(f"rulefit importance has shape {imp.shape}, expected "
+                         f"({int(n_features)},)")
+    if not np.all(imp >= 0):
+        raise ValueError("rulefit importance must be non-negative "
+                         "(save_coefficients_csv normalizes and ranks by it)")
+    return imp
+
+
+def rulefit_predict(rf, X, chunk: int) -> np.ndarray:
+    """Predict in row batches, in watts.
+
+    Two reasons this is the only prediction path:
+
+    * ``rf.predict`` on an EMPTY ``X`` raises ("Found array with 0 sample(s) ...
+      required by LassoCV"), and ``run._run_one`` scores ``splits["test"]``
+      unconditionally -- it is reported even when empty.
+    * one call materializes ``n_rows x (Q + n_rules)`` float64 several times over
+      (``Winsorizer.trim``'s copy and tiles, ``RuleEnsemble.transform``'s scatter,
+      ``_design_matrix``'s concatenation): measured 5.33 GB peak for 509,062 rows
+      x 604 terms, where batching was also FASTER (1.8 s against 3.3 s).
+
+    Batching is not bit-identical to one call -- measured max abs difference
+    1.11e-16 from BLAS blocking, exact only for ``chunk >= n``. Nothing here
+    should be compared with ``==``.
+    """
+    X = np.asarray(X)
+    n = int(X.shape[0])
+    if n == 0:
+        return np.zeros(0, dtype=np.float64)
+    chunk = int(chunk)
+    if chunk <= 0 or n <= chunk:
+        return np.asarray(rf.predict(X), dtype=np.float64).ravel()
+    parts = [np.asarray(rf.predict(X[i:i + chunk]), dtype=np.float64).ravel()
+             for i in range(0, n, chunk)]
+    return np.concatenate(parts)
+
+
+def rulefit_terms(rf, names, col_ids) -> list[dict]:
+    """The non-zero terms of the fit, as rows for ``rulefit_terms.csv``.
+
+    THE ONE PLACE the term -> global-column-id mapping lives, and the one that is
+    easy to get wrong. ``get_rules(exclude_zero_coef=True)`` filters with
+    ``.loc[]``, so the returned frame keeps its ORIGINAL, now-gapped integer index
+    (e.g. ``[0, 1, 2, 3, 4, 6, 10, 11, ...]``) into the fit's
+    ``[linear terms | rules]`` column order. Its ``rule`` column is a *string*, so
+    ``Rule.defining_variables()`` is not reachable from a row -- the rule object
+    has to come from ``rule_ensemble.rules`` by offset. ``enumerate``-ing the
+    filtered frame instead would point every rule at the wrong RTL net.
+
+    ``coef_watts`` needs no un-scaling, unlike ridge's: the lasso is fitted
+    against raw ``y``, and ``linear_coef_`` already multiplies back through
+    ``FriedScale`` (which only ever multiplies, never centres).
+    """
+    names = list(names)
+    col_ids = np.asarray(col_ids).ravel()
+    n_lin = int(rf.n_linear_terms_)
+    rules = list(getattr(rf.rule_ensemble, "rules", []))
+    rows = []
+    frame = rf.get_rules(exclude_zero_coef=True, scaled=False)
+    for i, row in frame.iterrows():
+        i = int(i)
+        if i < n_lin:
+            ids = [int(col_ids[i])]
+        else:
+            ids = [int(col_ids[j])
+                   for j in sorted(rules[i - n_lin].defining_variables())]
+        rows.append({"term": str(row["rule"]), "type": str(row["type"]),
+                     "coef_watts": float(row["coef"]),
+                     "support": float(row["support"]),
+                     "importance": float(row["importance"]),
+                     "n_variables": int(row["n_variables"]),
+                     "col_ids": ";".join(str(c) for c in ids)})
+    # importance desc, ties by |coef| desc -- the save_coefficients_csv idiom.
+    # Sorted only AFTER the ids are attached, since sorting destroys the index.
+    rows.sort(key=lambda r: (-r["importance"], -abs(r["coef_watts"])))
+    return rows
+
+
+def rulefit_summary(rf) -> dict:
+    """Size and readout numbers for ``result.json``'s ``best``.
+
+    Lives here rather than in ``run.py`` so the invariant
+    ``n_nonzero_linear + n_nonzero_rules == n_nonzero_terms`` is unit-testable.
+    ``n_rules`` is the ACHIEVED count, which is below ``max_rules``: that cap is
+    enforced by sizing the ensemble, and identical conjunctions are then merged
+    (measured 315 rules from a 600 cap at Q=39).
+    """
+    coef = np.asarray(rf.coef_, dtype=np.float64).ravel()
+    n_lin = int(rf.n_linear_terms_)
+    nz = coef != 0
+    lscv = getattr(rf, "lscv", None)
+    alphas = getattr(lscv, "alphas_", None)
+    return {
+        "n_rules": int(rf.n_rules_),
+        "n_linear_terms": n_lin,
+        "n_nonzero_terms": int(nz.sum()),
+        "n_nonzero_linear": int(nz[:n_lin].sum()),
+        "n_nonzero_rules": int(nz[n_lin:].sum()),
+        "alpha": (None if lscv is None or not hasattr(lscv, "alpha_")
+                  else float(lscv.alpha_)),
+        "n_alphas": (None if alphas is None else int(np.size(alphas))),
+        "intercept_watts": float(np.ravel(rf.intercept_)[0])
+        if np.size(rf.intercept_) else 0.0,
+        "allow_negative_coef": bool(rf.allow_negative_coef_),
+    }
+
+
+def rulefit_interactions(rf, X, top_k: int):
+    """Friedman's overall H-statistic for the ``top_k`` most important features.
+
+    A thin pass-through to the fork's closed-form ``interaction_strength``, which
+    is exact rather than sampled. Cheap and bounded by ``top_k``: measured 0.2 s
+    at 100 features and 1.1 s at 1000 for ``top_k=10``, 0.3 s / 2.0 s at 20.
+
+    The pairwise companion (``interaction_statistics(order=2)``) is deliberately
+    not used: candidate pairs come only from rules that reference both features,
+    and at 1000 proxies that measured ZERO pairs -- an always-empty figure.
+    """
+    return rf.interaction_strength(np.asarray(X), top_k=int(top_k))

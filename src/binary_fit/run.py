@@ -7,11 +7,13 @@ Contains three stages: build_db, feature_select, fit. Run directly (no package/-
     python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-03-17-100proxy;
     python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-03-17-100proxy;
     python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/ridge.yaml --outdir analysis/ridge/2026-09-03-17-100proxy;
+    python src/binary_fit/run.py --feature_select --config src/binary_fit/configs/rulefit.yaml --outdir analysis/rulefit/2026-09-03-17-100proxy;
 
-3. Regression (fit, tree, nn, ridge) on the selected proxies:
+3. Regression (fit, tree, nn, ridge, rulefit) on the selected proxies:
     python src/binary_fit/run.py --fit --config src/binary_fit/configs/cobit.yaml --outdir analysis/cobit/2026-09-03-17-100proxy --model tree;
     python src/binary_fit/run.py --fit --config src/binary_fit/configs/nn.yaml --outdir analysis/nn/2026-09-03-17-100proxy --model nn;
-    python src/binary_fit/run.py --fit --config src/binary_fit/configs/ridge.yaml --outdir analysis/ridge/2026-09-03-17-100proxy --model ridge
+    python src/binary_fit/run.py --fit --config src/binary_fit/configs/ridge.yaml --outdir analysis/ridge/2026-09-03-17-100proxy --model ridge;
+    python src/binary_fit/run.py --fit --config src/binary_fit/configs/rulefit.yaml --outdir analysis/rulefit/2026-09-03-17-100proxy --model rulefit
 
 Options:
 1. --no-hpo to skip HPO
@@ -37,7 +39,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from binary_fit import build_db, data, hpo, models
 from binary_fit.config import Config
 from binary_fit.evaluate import evaluation_report
-from binary_fit.plots import plot_pred_vs_time, plot_q_sweep, plot_residual_panels
+from binary_fit.plots import (
+    plot_interaction_strength,
+    plot_pred_vs_time,
+    plot_q_sweep,
+    plot_residual_panels,
+)
 from binary_fit.utils import (
     load_json,
     load_proxies_csv,
@@ -47,14 +54,16 @@ from binary_fit.utils import (
     save_pickle_zst,
     save_proxies_csv,
     save_ridge_coefficients_csv,
+    save_rulefit_terms_csv,
     setup_logging,
 )
 
 
 # The Stage-2 regressors, in report order. Single source of truth for the
-# --model choices, the _run_one dispatch and the cmd_fit pre-flight check, so a
-# fourth backend is registered in exactly one place.
-MODEL_KINDS = ("tree", "nn", "ridge")
+# --model choices, the "both" expansion and the cmd_fit pre-flight check, so a
+# new backend's NAME is registered in exactly one place. (Its _run_one dispatch
+# arm is still a separate, deliberate edit -- see the comment there.)
+MODEL_KINDS = ("tree", "nn", "ridge", "rulefit")
 
 
 def _fmt(x):
@@ -176,12 +185,24 @@ def _cap_ridge_rows(cfg, X, y):
     = 8616 fitting rows). Same seeded-subsample idiom as ``data.load_split``'s
     ``selection.max_rows``.
     """
-    n, cap = int(X.shape[0]), int(cfg.ridge.max_rows)
+    return _cap_rows(cfg, X, y, cfg.ridge.max_rows, "ridge.max_rows")
+
+
+def _cap_rows(cfg, X, y, cap: int, what: str):
+    """Seeded row subsample, shared by the ridge and rulefit fitters.
+
+    ``cap <= 0`` and ``cap >= n`` both mean "every row" and return ``X`` and ``y``
+    unchanged, by identity -- unlike ``src/xopm_lib``'s ``_row_sample``, where a
+    cap of 0 samples zero rows. ``what`` names the config key that fired, because
+    rulefit has three separate caps (``hpo_rows``, ``fit_rows``, ``h_rows``).
+    Indices are sorted, so a benchmark's rows stay contiguous and in order.
+    """
+    n, cap = int(X.shape[0]), int(cap)
     if not (0 < cap < n):
         return X, y
     rng = np.random.default_rng(cfg.runtime.seed)
     rows = np.sort(rng.choice(n, size=cap, replace=False))
-    log.info("ridge: fitting on a seeded %d/%d row subsample (ridge.max_rows)", cap, n)
+    log.info("%s: using a seeded %d/%d row subsample", what, cap, n)
     return X[rows], y[rows]
 
 
@@ -239,6 +260,102 @@ def _fit_ridge(cfg, qdir, Xtr, ytr, Xval, yval, names, col_ids, use_hpo):
     return best, models.ridge_importance(model), "", lambda X: models.predict(model, xs, ys, X)
 
 
+def _fit_rulefit(cfg, qdir, label, Xtr, ytr, Xval, yval, names, col_ids, use_hpo):
+    """Rule ensemble + sparse linear readout; hyperparameters from an optuna study.
+
+    Unlike ``_fit_ridge`` three functions up, this one KEEPS the tree/nn
+    validation-split guard. Ridge is the deliberate exception because RidgeCV's
+    GCV runs inside the rows it is handed and never scores val; this study does
+    score the val tail, so without a val split there is nothing to maximize.
+
+    Two more divergences from the other three fitters, both because nothing here
+    standardizes anything:
+
+    * ``model.joblib`` holds ``{"model": rf}`` alone, not the nn/ridge
+      ``{"model", "x_scaler", "y_scaler"}`` triple. The fork's ``Winsorizer`` and
+      ``FriedScale`` live on ``rf`` and rescale only the *linear* terms;
+      predictions and coefficients are already in watts.
+    * ``models.predict`` is not reused -- ``models.rulefit_predict`` is, because it
+      also carries the row batching and the empty-split guard.
+    """
+    models._import_rulefit()  # fail here, not minutes deeper, if the fork is absent
+    if use_hpo and (Xval is None or not yval.size):
+        raise RuntimeError("HPO needs a validation split (split.val_fraction > 0)")
+
+    if use_hpo:
+        Xh, yh = _cap_rows(cfg, Xtr, ytr, cfg.rulefit.hpo_rows, "rulefit.hpo_rows")
+        params = hpo.run_rulefit_study(cfg.rulefit, Xh, yh, Xval, yval, names,
+                                       cfg.runtime.seed)
+        log.info("best rulefit: tree_size=%d max_rules=%d memory_par=%.3g valR2=%.4f "
+                 "(%d trials in %.0fs)", params["tree_size"], params["max_rules"],
+                 params["memory_par"], params["val_r2"], params["n_trials"],
+                 params["hpo_runtime_s"])
+        # the same train+val set the tree and nn backends refit on, which is what
+        # makes _run_one's "in HPO refit" panel captions correct here too
+        X_fit = np.vstack([Xtr, Xval])
+        y_fit = np.concatenate([ytr, yval])
+        hpo_rows = int(Xh.shape[0])
+    else:
+        # clamp the fixed point to the configured ceiling: NOHPO_RULEFIT names
+        # max_rules explicitly, so it would otherwise override a smaller cap
+        params = dict(models.NOHPO_RULEFIT)
+        params["max_rules"] = min(int(params["max_rules"]), int(cfg.rulefit.max_rules))
+        params |= {"val_r2": None, "n_trials": None, "hpo_runtime_s": None}
+        X_fit, y_fit, hpo_rows = Xtr, ytr, None
+    X_fit, y_fit = _cap_rows(cfg, X_fit, y_fit, cfg.rulefit.fit_rows, "rulefit.fit_rows")
+
+    n_fit = int(X_fit.shape[0])
+    r = cfg.rulefit
+    # logged BEFORE the fit: on the real data this takes minutes, and which
+    # regime it is in (non-negative? intercept? trimmed?) decides how to read it
+    log.info("rulefit: fitting %d rows x %d proxies | tree_size=%d max_rules=%d "
+             "memory_par=%.3g exp_rand_tree_size=%s fit_intercept=%s "
+             "non_negative_coef=%s lin_trim_quantile=%g n_alphas=%d cv=%d",
+             n_fit, len(col_ids), params["tree_size"], params["max_rules"],
+             params["memory_par"], r.exp_rand_tree_size, r.fit_intercept,
+             r.non_negative_coef, r.lin_trim_quantile, r.n_alphas, r.cv)
+    rf = models.fit_rulefit(
+        models.make_rulefit(r, cfg.train.base_seed,
+                            **{k: params[k] for k in models.RULEFIT_SPACE}),
+        X_fit, y_fit, names)
+
+    best = {k: params[k] for k in (*models.RULEFIT_SPACE, "val_r2", "n_trials",
+                                   "hpo_runtime_s")}
+    best |= models.rulefit_summary(rf)
+    best |= {"n_fit_rows": n_fit, "hpo_rows": hpo_rows,
+             "fit_intercept": bool(r.fit_intercept),
+             "non_negative_coef": bool(r.non_negative_coef),
+             "exp_rand_tree_size": bool(r.exp_rand_tree_size),
+             "lin_trim_quantile": float(r.lin_trim_quantile)}
+    if best["n_nonzero_terms"] == 0:
+        # Not cosmetic: save_coefficients_csv skips normalization when the
+        # importances sum to 0 and then ranks by |mcp_weight|, which would
+        # republish the Stage-1 MCP order as if it were this model's.
+        log.error("rulefit: every coefficient is zero -- the model predicts a "
+                  "constant and rulefit_terms.csv is empty. Try "
+                  "rulefit.non_negative_coef=false, rulefit.fit_intercept=true, "
+                  "or a smaller rulefit.n_alphas.")
+
+    joblib.dump({"model": rf}, qdir / "model.joblib")
+    # written inside the fitter so a rule/coefficient desync fails here rather
+    # than three splits later, once result.json is already on disk
+    save_rulefit_terms_csv(qdir / "rulefit_terms.csv",
+                           models.rulefit_terms(rf, names, col_ids))
+    Xh, _ = _cap_rows(cfg, X_fit, y_fit, cfg.rulefit.h_rows, "rulefit.h_rows")
+
+    def _draw_interaction_strength():
+        # the H computation is INSIDE the guarded call, not an argument to it:
+        # interaction_strength walks the rule ensemble, so it can fail on its own,
+        # and this runs before result.json is written
+        return plot_interaction_strength(
+            models.rulefit_interactions(rf, Xh, cfg.rulefit.h_top_k),
+            qdir / "interaction_strength.png", name=f"rulefit {label}")
+
+    _try_plot(_draw_interaction_strength)
+    return (best, models.rulefit_importance(rf, len(col_ids)), "",
+            lambda X: models.rulefit_predict(rf, X, int(cfg.rulefit.predict_chunk)))
+
+
 def _predictions_frame(preds: dict, splits: dict) -> pd.DataFrame:
     """Long frame of every split's labels and predictions, for later replotting.
 
@@ -262,13 +379,18 @@ def _predictions_frame(preds: dict, splits: dict) -> pd.DataFrame:
 def _try_plot(fn, *args, **kwargs):
     """Render a figure without ever letting it cost a completed fit.
 
-    Only ever called after ``result.json`` is on disk, so a render failure can
-    lose the figure and nothing else -- but unwrapped it would still abort the
-    remaining ``-q`` experiments of a run whose models are already saved. The
-    broad ``except`` is safe structurally rather than by narrowing the exception
-    tuple: the plot functions are unit-tested with no wrapper in the path, the
-    full traceback is logged, and ``test_e2e`` asserts the exact artifact set,
-    so this handler cannot go permanently active unnoticed.
+    The property this relies on is that it NEVER RAISES: a render failure loses
+    the figure and nothing else, where unwrapped it would abort the remaining
+    ``-q`` experiments of a run whose models are already saved. That holds
+    wherever it is called from, which matters because there are now two kinds of
+    call site: the figures in ``_run_one`` are drawn after ``result.json`` is on
+    disk, while ``_fit_rulefit``'s interaction-strength figure is drawn before it
+    (only the fitter holds the fitted estimator). In both cases the fit survives.
+
+    The broad ``except`` is safe structurally rather than by narrowing the
+    exception tuple: the plot functions are unit-tested with no wrapper in the
+    path, the full traceback is logged, and ``test_e2e`` asserts the exact
+    artifact set, so this handler cannot go permanently active unnoticed.
     """
     try:
         return fn(*args, **kwargs)
@@ -312,6 +434,9 @@ def _run_one(kind, cfg, qdir, label, names, col_ids, weights, union, use_hpo) ->
     elif kind == "ridge":
         best, importances, leaves, predict_fn = _fit_ridge(
             cfg, qdir, Xtr, ytr, Xval, yval, names, col_ids, use_hpo)
+    elif kind == "rulefit":
+        best, importances, leaves, predict_fn = _fit_rulefit(
+            cfg, qdir, label, Xtr, ytr, Xval, yval, names, col_ids, use_hpo)
     else:
         raise ValueError(f"unknown model kind {kind!r} (expected {', '.join(MODEL_KINDS)})")
 
@@ -338,6 +463,12 @@ def _run_one(kind, cfg, qdir, label, names, col_ids, weights, union, use_hpo) ->
            "train_r2": reports.get("train", {}).get("r2"),
            "val_r2": reports.get("val", {}).get("r2"),
            "test_r2": reports["test"]["r2"], "test_mape": reports["test"]["mape"],
+           # pooled test_r2 above concatenates the held-out benchmarks and scores
+           # them against ONE mean, so a benchmark sitting in a different power
+           # band inflates it. The per-benchmark split is each benchmark scored
+           # against its own mean -- the honest per-workload number.
+           "test_r2_per_benchmark": {b: m["r2"]
+                                     for b, m in reports["test"]["per_benchmark"].items()},
            "reports": reports}
     save_json(qdir / "result.json", rec)
     # Figures and predictions come AFTER result.json. The model was saved back in
@@ -359,7 +490,42 @@ def _run_one(kind, cfg, qdir, label, names, col_ids, weights, union, use_hpo) ->
                   in_sample=in_sample)
     log.info("[%s] %s: test R2=%.4f MAPE=%.3f%% (train R2=%s val R2=%s)",
              kind, label, rec["test_r2"], rec["test_mape"], _fmt(rec["train_r2"]), _fmt(rec["val_r2"]))
+    for bench, r2 in rec["test_r2_per_benchmark"].items():
+        log.info("[%s] %s: test R2[%s]=%s", kind, label, bench, _fmt(r2))
     return rec
+
+
+def _per_benchmark_test_lines(recs: list[dict]) -> list[str]:
+    """Test R² broken out per held-out benchmark, one column per benchmark.
+
+    The `test R²` column of the table above is POOLED: the held-out benchmarks
+    are concatenated and scored against a single mean, which credits a model for
+    merely separating two benchmarks that sit in different power bands. Each
+    column here scores one benchmark against its own mean, so they are the
+    numbers to read for per-workload accuracy -- and they can be much lower than
+    the pooled one without anything being wrong.
+    """
+    # older result.json files (written before this column existed) carry the same
+    # numbers under reports.test.per_benchmark, so read that as the fallback
+    per = [({b: m.get("r2") for b, m in
+             r.get("reports", {}).get("test", {}).get("per_benchmark", {}).items()}
+            if not r.get("test_r2_per_benchmark") else r["test_r2_per_benchmark"])
+           for r in recs]
+    benches = list(dict.fromkeys(b for d in per for b in d))
+    if not benches:
+        return []
+    head = " | ".join(f"test R² {b}" for b in benches)
+    out = ["", "## Test R² per held-out benchmark", "",
+           f"| experiment | Q | window | {head} |",
+           "|---|---|---|" + "---|" * len(benches)]
+    for r, d in zip(recs, per):
+        cells = " | ".join(_fmt(d.get(b)) for b in benches)
+        out.append(f"| {r.get('label','')} | {r.get('q','')} | "
+                   f"{r.get('window_size', 1)} | {cells} |")
+    out += ["", "Each column is scored against that benchmark's own mean; the "
+            "`test R²`", "above pools all of them against one mean and is not "
+            "their average."]
+    return out
 
 
 def _write_report_md(records: list[dict], path: Path, title: str, *,
@@ -376,6 +542,7 @@ def _write_report_md(records: list[dict], path: Path, title: str, *,
             f"{r.get('final_leaves','')} | "
             f"{_fmt(r.get('train_r2'))} | {_fmt(r.get('val_r2'))} | "
             f"{_fmt(r.get('test_r2'))} | {r.get('test_mape', float('nan')):.3f} |")
+    lines += _per_benchmark_test_lines(recs)
     if recs:
         best = max(recs, key=lambda r: (r.get("test_r2") if r.get("test_r2") is not None else -9))
         # a lone experiment writes beside this report, several keep one <label>/
@@ -402,6 +569,22 @@ def _write_report_md(records: list[dict], path: Path, title: str, *,
                       "  comparable across bits, `coef_watts` is watts per unit of the",
                       "  feature. The matching `intercept_watts` is in `result.json`",
                       "  under `best`."]
+        # rulefit-only, and a separate `if` rather than an `elif`, so a tree, nn
+        # or ridge report.md stays byte-identical to before
+        if any(r.get("method") == "rulefit" for r in recs):
+            lines += ["- `rulefit_terms.csv` — the terms the model actually uses, one",
+                      "  row per rule and per linear term, ranked by importance.",
+                      "  `coef_watts` is directly comparable with",
+                      "  `ridge_coefficients.csv`'s and needs no un-scaling; `col_ids`",
+                      "  traces a rule back to its RTL nets. Its `importance` is the raw",
+                      "  Friedman eq. (28)/(29) value, *not* normalized like",
+                      "  `coefficients.csv`'s. `intercept_watts`, `n_rules` and the",
+                      "  non-zero term counts are in `result.json` under `best`.",
+                      "- `interaction_strength.png` — Friedman's overall H per feature, a",
+                      "  ranking only (the library implements no null distribution).",
+                      "- the `leaves` column above is blank on purpose: a deduplicated",
+                      "  rule is not a score register. `best.n_rules` and",
+                      "  `best.n_nonzero_rules` are this backend's size numbers."]
         if sweep:
             lines += ["", "Across experiments: `q_sweep.png`."]
     Path(path).write_text("\n".join(lines) + "\n")

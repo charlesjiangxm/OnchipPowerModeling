@@ -6,3 +6,10 @@ pandas
 matplotlib
 joblib
 pytest
+# --model rulefit additionally needs the vendored RuleFit fork, which is a git
+# submodule rather than a PyPI release:
+#     git submodule update --init && pip install -e third_party/rulefit
+# That install also brings `ordered-set`, the fork's own easily-missed
+# dependency. Do NOT `pip install rulefit`: the PyPI package of that name is a
+# different, older codebase with no RuleFitRegressor, allow_negative_coef or
+# get_feature_importance. The other three backends do not import it at all.
