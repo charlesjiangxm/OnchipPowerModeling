@@ -25,11 +25,22 @@ cp0/idu/ifu/iu/vidu). All artifacts land in ``analysis/x-opm/<YYYY-MM-DD-HH-MM>/
 Per-module predictions are summed to reconstruct whole-core (aq_core) power and scored
 against the true ``Pc(x_aq_core)`` (the one place raw ``dataset/`` is read).
 
+``--model elasticnet`` selects a second, rule-free backend: the same features, the same
+FriedScale scaling, the same non-negative ElasticNetCV -- but no tree stage and no rule
+block, i.e. RuleFit's linear stage on its own. It is the ablation that says how much of
+a module's accuracy the rules actually buy. Being a linear model it has no interactions
+and no booster, so ``rule.csv`` and the Friedman-H / SHAP artifacts are not written
+(``doc/spec/develop-fit-lib.md``: "N/A for MLP and ElasticNetCV"); ``enet_cv_path.png``
+replaces ``hpo_history.png``. Every other artifact, and the aq_core reconstruction, are
+shared with the RuleFit backend.
+
 CLI (interpreter ~/anaconda3/bin/python):
   python src/xopm_lib/model_regression.py --module cp0 --n-trials 30
   python src/xopm_lib/model_regression.py --all --n-trials 30
   # restrict the feature universe to chosen signal categories (default: all)
   python src/xopm_lib/model_regression.py --module cp0 --categories control,data
+  # rule-free backend: a plain (non-negative) ElasticNetCV over the features
+  python src/xopm_lib/model_regression.py --all --model elasticnet --win-size 4
 """
 
 from __future__ import annotations
@@ -90,6 +101,12 @@ DEFAULT_RAND_MAX_ROWS = 200_000   # cap the giant random-stimulus case before po
 DEFAULT_HPO_ROWS = 150_000        # rows sampled for the Optuna booster search
 DEFAULT_FIT_ROWS = 120_000        # rows sampled for the RuleFit linear (Lasso) stage
 DEFAULT_MAX_RULES = 800           # keep at most this many rules (top by gain)
+
+# ``--model elasticnet``: the mixing grid cross-validated alongside alpha. The
+# fork rejects l1_ratio<=0 (pure ridge builds no alpha path) and warns below 0.01.
+DEFAULT_L1_RATIOS = (0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
+
+BACKEND_LABEL = {"rulefit": "RuleFit", "elasticnetcv": "ElasticNetCV"}
 
 
 # ===========================================================================
@@ -471,6 +488,53 @@ class XGBRuleFit(RuleFitRegressor):
 
 
 # ===========================================================================
+# ElasticNetCV -- the rule-free backend
+# ===========================================================================
+
+def fit_elasticnet(splits: dict[str, Split], feat: list[str],
+                   l1_ratios=DEFAULT_L1_RATIOS, positive: bool = True,
+                   fit_rows: int = DEFAULT_FIT_ROWS, seed: int = 0,
+                   cv: int = 3) -> RuleFitRegressor:
+    """A plain ``ElasticNetCV`` over the features -- no trees, no rules.
+
+    Uses the fork's tree-free ``model_type='l'``, so the design matrix is only the
+    winsorized FriedScale linear terms ``0.4 * l_j / std(l_j)``: this is the RuleFit
+    backend with the rule block removed and nothing else changed (same scaling, same
+    ``cv``, same non-negativity), which makes the two runs a clean ablation of the
+    rule stage. The row cap mirrors the RuleFit linear stage, and ``alpha`` plus
+    ``l1_ratio`` are chosen by ``ElasticNetCV``'s own cross-validation -- the
+    ``*SearchCV`` the spec asks for is built into this estimator.
+    """
+    X, y = _row_sample(splits["train"].X, splits["train"].y, fit_rows, seed)
+    log.info("ElasticNetCV on %d train rows (of %d), %d features, l1_ratio grid %s, "
+             "positive=%s", len(y), len(splits["train"].y), X.shape[1],
+             list(l1_ratios), positive)
+    rf = RuleFitRegressor(rfmode="regress", model_type="l", penalty="elasticnet",
+                          l1_ratio=list(l1_ratios),
+                          allow_negative_coef=not positive,   # -> positive=True
+                          fit_intercept=True, lin_standardise=True,
+                          lin_trim_quantile=0.025, cv=cv, random_state=seed,
+                          n_jobs=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")      # alpha-path ConvergenceWarnings
+        rf.fit(X, y, feature_names=list(feat))
+    log.info("ElasticNetCV alpha=%.4g l1_ratio=%g non-zero coefs=%d/%d",
+             rf.lscv.alpha_, rf.lscv.l1_ratio_, int((rf.coef_ != 0).sum()),
+             len(rf.coef_))
+    return rf
+
+
+def enet_fit_summary(rf: RuleFitRegressor) -> dict:
+    """The fitted-model facts ``metrics.json`` and ``report.md`` quote for the
+    elasticnet backend (the counterpart of the booster's ``xgb_params``)."""
+    return {"alpha": float(rf.lscv.alpha_), "l1_ratio": float(rf.lscv.l1_ratio_),
+            "n_nonzero_coef": int((rf.coef_ != 0).sum()),
+            "n_coef": int(len(rf.coef_)),
+            "intercept_mw": float(np.ravel(rf.intercept_)[0]) * POWER_SCALE,
+            "cv_mse_min": float(np.asarray(rf.lscv.mse_path_).mean(axis=-1).min())}
+
+
+# ===========================================================================
 # HPO (Optuna over DART + tree params; objective = booster val RMSE)
 # ===========================================================================
 
@@ -618,6 +682,29 @@ def plot_h_bar(frame: pd.DataFrame, label_cols: list[str], title: str, path: str
     fig.tight_layout(); fig.savefig(path, dpi=120); plt.close(fig)
 
 
+def plot_enet_cv_path(rf, path: str) -> None:
+    """ElasticNetCV cross-validation curve: mean CV MSE against alpha, one line per
+    l1_ratio, with the selected pair marked. The enet counterpart of
+    ``hpo_history.png`` (the spec asks for the search trend to be visualised)."""
+    cv = rf.lscv
+    mse = np.asarray(cv.mse_path_, dtype=float)
+    alphas = np.asarray(cv.alphas_, dtype=float)
+    ratios = np.atleast_1d(np.asarray(cv.l1_ratio, dtype=float))
+    if mse.ndim == 2:                       # scalar l1_ratio -> single path
+        mse, alphas = mse[None, ...], alphas[None, :]
+    fig, ax = plt.subplots(figsize=(7.6, 4.6))
+    for i, r in enumerate(ratios[: len(mse)]):
+        ax.plot(alphas[i], mse[i].mean(axis=-1), lw=1.2, label=f"l1_ratio={r:g}")
+    ax.axvline(cv.alpha_, color="r", ls="--", lw=1,
+               label=f"chosen: alpha={cv.alpha_:.3g}, l1_ratio={cv.l1_ratio_:g}")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.invert_xaxis()                       # path runs strong -> weak penalty
+    ax.set_xlabel("alpha"); ax.set_ylabel(f"mean CV MSE ({cv.cv}-fold, W^2)")
+    ax.set_title("ElasticNetCV alpha / l1_ratio search")
+    ax.legend(fontsize=7, ncol=2)
+    fig.tight_layout(); fig.savefig(path, dpi=110); plt.close(fig)
+
+
 def _placeholder(path: str, text: str) -> None:
     fig, ax = plt.subplots(figsize=(7, 3))
     ax.text(0.5, 0.5, text, ha="center", va="center", wrap=True, fontsize=9)
@@ -754,8 +841,11 @@ def write_coefficients_csv(rf: XGBRuleFit, path: str) -> pd.DataFrame:
 
 
 def write_report(module: str, out_dir: str, cfg: dict, metrics: dict,
-                 dims: dict, rule_df: pd.DataFrame) -> None:
-    lines = [f"# X-OPM RuleFit report -- module `{module}`", ""]
+                 dims: dict, rule_df: pd.DataFrame | None,
+                 fit_info: dict | None = None) -> None:
+    is_enet = cfg.get("backend") == "elasticnetcv"
+    lines = [f"# X-OPM {BACKEND_LABEL[cfg.get('backend', 'rulefit')]} report "
+             f"-- module `{module}`", ""]
     lines += ["## Dataset", "",
               f"- Source: `dataset_processed/` (module `{module}`)",
               f"- Target power column: `{dims['target']}`",
@@ -772,36 +862,71 @@ def write_report(module: str, out_dir: str, cfg: dict, metrics: dict,
                      "(train/val/test counts are windows)")
     cats = cfg.get("categories")
     cats_note = ", ".join(cats) if cats and set(cats) != set(fs.CATEGORIES) else "all"
-    lines += ["## Model & parameters", "",
-              "- Backend: XGBoost (gbtree + DART dropout) -> RuleFit "
-              "(non-negative Lasso/ElasticNet)",
-              "- Monotone constraint: +1 on every feature",
-              f"- Signal categories: {cats_note}",
-              f"- Window averaging: win_size={win} ({win_note})",
-              f"- Penalty: {cfg['penalty']} (positive coefficients only)",
-              f"- Gain threshold (rule prune): {cfg['gain_threshold']}",
-              f"- num_boost_round: {cfg['num_boost_round']}",
-              f"- HPO trials: {cfg['n_trials']}", "",
-              "```json", json.dumps(cfg["xgb_params"], indent=2), "```", ""]
+    lines += ["## Model & parameters", ""]
+    if is_enet:
+        sign = ("non-negative only (positive=True), as in RuleFit's linear stage"
+                if cfg["positive_coef_only"]
+                else "unconstrained (negative coefficients allowed)")
+        lines += ["- Backend: ElasticNetCV over the features "
+                  "(no trees, no rules -- the RuleFit linear stage on its own)",
+                  f"- Linear-term scaling: {cfg['lin_standardise']}",
+                  f"- Coefficient sign: {sign}",
+                  f"- Fit intercept: {cfg['fit_intercept']}",
+                  f"- Signal categories: {cats_note}",
+                  f"- Window averaging: win_size={win} ({win_note})",
+                  f"- l1_ratio grid (cross-validated): {cfg['l1_ratio_grid']}",
+                  f"- CV folds: {cfg['cv']} (alpha path: the solver's own 100 alphas)",
+                  f"- Fit rows: {cfg['fit_rows']} (subsample cap on the pooled train "
+                  "set, same cap as RuleFit's linear stage)"]
+        if fit_info:
+            lines += [f"- Selected alpha: {fit_info['alpha']:.4g}, "
+                      f"l1_ratio: {fit_info['l1_ratio']:g}",
+                      f"- Intercept (bias): {fit_info['intercept_mw']:.4g} "
+                      f"{POWER_UNIT}"]
+        lines += [""]
+    else:
+        lines += ["- Backend: XGBoost (gbtree + DART dropout) -> RuleFit "
+                  "(non-negative Lasso/ElasticNet)",
+                  "- Monotone constraint: +1 on every feature",
+                  f"- Signal categories: {cats_note}",
+                  f"- Window averaging: win_size={win} ({win_note})",
+                  f"- Penalty: {cfg['penalty']} (positive coefficients only)",
+                  f"- Gain threshold (rule prune): {cfg['gain_threshold']}",
+                  f"- num_boost_round: {cfg['num_boost_round']}",
+                  f"- HPO trials: {cfg['n_trials']}", "",
+                  "```json", json.dumps(cfg["xgb_params"], indent=2), "```", ""]
     lines += ["## Metrics", "",
               "| split | R2 | MAPE% | RMSE |", "|---|---|---|---|"]
     for s in ("train", "val", "test"):
         m = metrics[s]
         lines.append(f"| {s} | {m['r2']:.4f} | {m['mape']:.3f} | {m['rmse']:.3e} |")
-    n_rules = int((rule_df["type"] == "rule").sum())
-    n_kept = int(((rule_df["type"] == "rule") & (~rule_df["dropped"])).sum())
-    lines += ["", "## Rules", "",
-              f"- Rules extracted: {n_rules} (kept {n_kept}, "
-              f"dropped {n_rules - n_kept})",
-              f"- Linear terms: {int((rule_df['type'] == 'linear').sum())}",
-              "- See `rule.csv` (sorted by gain) and `coefficients.csv` "
-              "(fitted coefficients + bias in mW, ranked by importance).", "",
-              "## Figures", "",
-              "- `residual_train_val_test.png`",
-              "- `pred_vs_time_{train,val,test}.png`",
-              "- `h_overall.png`, `h_pairwise.png`",
-              "- `shap_beeswarm.png`, `shap_interaction_top_pairs.png`",
-              "- `hpo_history.png`", ""]
+    if is_enet:
+        nz = fit_info["n_nonzero_coef"] if fit_info else 0
+        lines += ["", "## Coefficients", "",
+                  f"- Non-zero coefficients: {nz} of {dims['n_features']} features",
+                  "- See `coefficients.csv` (fitted coefficients + bias in mW, ranked "
+                  "by importance).",
+                  "- No `rule.csv`: this backend builds no rules. Friedman-H and SHAP "
+                  "are N/A for a linear model (spec `doc/spec/develop-fit-lib.md`).",
+                  "", "## Figures", "",
+                  "- `residual_train_val_test.png`",
+                  "- `pred_vs_time_{train,val,test}.png`",
+                  "- `enet_cv_path.png`", ""]
+    else:
+        n_rules = int((rule_df["type"] == "rule").sum())
+        n_kept = int(((rule_df["type"] == "rule") & (~rule_df["dropped"])).sum())
+        lines += ["", "## Rules", "",
+                  f"- Rules extracted: {n_rules} (kept {n_kept}, "
+                  f"dropped {n_rules - n_kept})",
+                  f"- Linear terms: {int((rule_df['type'] == 'linear').sum())}",
+                  "- See `rule.csv` (sorted by gain) and `coefficients.csv` "
+                  "(fitted coefficients + bias in mW, ranked by importance).", "",
+                  "## Figures", "",
+                  "- `residual_train_val_test.png`",
+                  "- `pred_vs_time_{train,val,test}.png`",
+                  "- `h_overall.png`, `h_pairwise.png`",
+                  "- `shap_beeswarm.png`, `shap_interaction_top_pairs.png`",
+                  "- `hpo_history.png`", ""]
     with open(os.path.join(out_dir, "report.md"), "w") as fh:
         fh.write("\n".join(lines))
 
@@ -816,7 +941,9 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
                use_selection: bool = True, max_rules: int = DEFAULT_MAX_RULES,
                fit_rows: int = DEFAULT_FIT_ROWS, hpo_rows: int = DEFAULT_HPO_ROWS,
                rand_max_rows: int = DEFAULT_RAND_MAX_ROWS,
-               win_size: int = 64, categories: list[str] | None = None) -> dict:
+               win_size: int = 64, categories: list[str] | None = None,
+               model: str = "rulefit", l1_ratios=DEFAULT_L1_RATIOS,
+               positive: bool = True) -> dict:
     out_dir = os.path.join(ts_dir, module)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -831,14 +958,21 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
             f"{module}: no features for categories {categories} "
             f"(with{'out' if not use_selection else ''} feature selection) -- "
             "requested categories are absent for this module")
-    monotone = "(" + ",".join(["1"] * len(feat)) + ")"
-
-    best_params, nbr, study = run_hpo(splits, monotone, n_trials, seed, hpo_rows=hpo_rows)
-
-    rf = XGBRuleFit(best_params, nbr, gain_threshold=gain_threshold, max_rules=max_rules,
-                    fit_rows=fit_rows, penalty=penalty, random_state=seed)
-    rf.fit(splits["train"].X, splits["train"].y, feature_names=feat,
-           monotone_constraints=monotone)
+    is_enet = model == "elasticnet"
+    fit_info = None
+    if is_enet:
+        rf = fit_elasticnet(splits, feat, l1_ratios=l1_ratios, positive=positive,
+                            fit_rows=fit_rows, seed=seed)
+        fit_info = enet_fit_summary(rf)
+    else:
+        monotone = "(" + ",".join(["1"] * len(feat)) + ")"
+        best_params, nbr, study = run_hpo(splits, monotone, n_trials, seed,
+                                          hpo_rows=hpo_rows)
+        rf = XGBRuleFit(best_params, nbr, gain_threshold=gain_threshold,
+                        max_rules=max_rules, fit_rows=fit_rows, penalty=penalty,
+                        random_state=seed)
+        rf.fit(splits["train"].X, splits["train"].y, feature_names=feat,
+               monotone_constraints=monotone)
 
     # The model is fit on the full train (incl. the random augmentation), but the
     # reported train metric / plots use only the real benchmarks, so train R2 is
@@ -855,7 +989,9 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
                  metrics[s]["r2"], metrics[s]["mape"], metrics[s]["rmse"])
 
     # ---- artifacts ----
-    rule_df = write_rule_csv(rf, os.path.join(out_dir, "rule.csv"))
+    rule_df = None      # rules exist only for the rulefit backend
+    if not is_enet:
+        rule_df = write_rule_csv(rf, os.path.join(out_dir, "rule.csv"))
     write_coefficients_csv(rf, os.path.join(out_dir, "coefficients.csv"))
     plot_residual_panels(preds, module, os.path.join(out_dir, "residual_train_val_test.png"))
     for s in ("train", "val", "test"):
@@ -863,39 +999,44 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
                           os.path.join(out_dir, f"pred_vs_time_{s}.png"),
                           win_size=win_size)
 
-    # Friedman H (fork engine, on a row sample for tractability)
-    Xs = splits["train"].X
-    samp = Xs[np.random.RandomState(seed).choice(
-        len(Xs), min(INTERP_SAMPLE, len(Xs)), replace=False)] if len(Xs) else Xs
-    try:
-        h_over = rf.interaction_strength(samp, top_k=25)
-    except Exception as e:                                        # noqa: BLE001
-        log.warning("interaction_strength failed: %s", e); h_over = None
-    plot_h_bar(h_over, ["feature"], "Friedman overall H (per feature)",
-               os.path.join(out_dir, "h_overall.png"))
-    try:
-        h_pair = rf.interaction_statistics(samp, order=2, top_k=12, max_tuples=5000)
-    except Exception as e:                                        # noqa: BLE001
-        log.warning("interaction_statistics failed: %s", e); h_pair = None
-    plot_h_bar(h_pair, ["feature_1", "feature_2"], "Friedman pairwise H (top pairs)",
-               os.path.join(out_dir, "h_pairwise.png"))
+    if is_enet:
+        # A linear model has no interactions and no booster, so Friedman-H and SHAP
+        # are N/A; the CV curve takes the place of hpo_history.png.
+        plot_enet_cv_path(rf, os.path.join(out_dir, "enet_cv_path.png"))
+    else:
+        # Friedman H (fork engine, on a row sample for tractability)
+        Xs = splits["train"].X
+        samp = Xs[np.random.RandomState(seed).choice(
+            len(Xs), min(INTERP_SAMPLE, len(Xs)), replace=False)] if len(Xs) else Xs
+        try:
+            h_over = rf.interaction_strength(samp, top_k=25)
+        except Exception as e:                                        # noqa: BLE001
+            log.warning("interaction_strength failed: %s", e); h_over = None
+        plot_h_bar(h_over, ["feature"], "Friedman overall H (per feature)",
+                   os.path.join(out_dir, "h_overall.png"))
+        try:
+            h_pair = rf.interaction_statistics(samp, order=2, top_k=12, max_tuples=5000)
+        except Exception as e:                                        # noqa: BLE001
+            log.warning("interaction_statistics failed: %s", e); h_pair = None
+        plot_h_bar(h_pair, ["feature_1", "feature_2"], "Friedman pairwise H (top pairs)",
+                   os.path.join(out_dir, "h_pairwise.png"))
 
-    # SHAP (native TreeSHAP)
-    plot_shap_beeswarm(rf.booster_, Xs, feat,
-                       os.path.join(out_dir, "shap_beeswarm.png"), seed=seed)
-    plot_shap_interactions(rf.booster_, Xs, feat,
-                           os.path.join(out_dir, "shap_interaction_top_pairs.png"),
-                           seed=seed)
+        # SHAP (native TreeSHAP)
+        plot_shap_beeswarm(rf.booster_, Xs, feat,
+                           os.path.join(out_dir, "shap_beeswarm.png"), seed=seed)
+        plot_shap_interactions(rf.booster_, Xs, feat,
+                               os.path.join(out_dir, "shap_interaction_top_pairs.png"),
+                               seed=seed)
 
-    # HPO history
-    try:
-        from optuna.visualization.matplotlib import plot_optimization_history
-        ax = plot_optimization_history(study)
-        ax.figure.tight_layout(); ax.figure.savefig(
-            os.path.join(out_dir, "hpo_history.png"), dpi=110)
-        plt.close(ax.figure)
-    except Exception as e:                                        # noqa: BLE001
-        log.warning("hpo history plot failed: %s", e)
+        # HPO history
+        try:
+            from optuna.visualization.matplotlib import plot_optimization_history
+            ax = plot_optimization_history(study)
+            ax.figure.tight_layout(); ax.figure.savefig(
+                os.path.join(out_dir, "hpo_history.png"), dpi=110)
+            plt.close(ax.figure)
+        except Exception as e:                                        # noqa: BLE001
+            log.warning("hpo history plot failed: %s", e)
 
     # predictions for aq_core reconstruction (random already excluded from sp['train'])
     pred_frames = []
@@ -914,17 +1055,26 @@ def run_module(module: str, ts_dir: str, dataset_dir: str = DATASET_PROCESSED,
             "n_val": len(splits["val"].y), "n_test": len(splits["test"].y),
             "train_benches": sorted(sp["train"].slices),
             "test_benches": sorted(splits["test"].slices)}
-    cfg = {"xgb_params": {k: v for k, v in best_params.items()
-                          if k != "monotone_constraints"},
-           "num_boost_round": nbr, "n_trials": n_trials, "penalty": penalty,
-           "gain_threshold": gain_threshold, "monotone": "+1 all features",
+    cfg = {"backend": "elasticnetcv" if is_enet else "rulefit",
            "win_size": win_size,
            "categories": list(categories) if categories else list(fs.CATEGORIES)}
-    write_report(module, out_dir, cfg, metrics, dims, rule_df)
+    if is_enet:
+        cfg.update({"l1_ratio_grid": [float(v) for v in l1_ratios], "cv": 3,
+                    "positive_coef_only": bool(positive), "fit_intercept": True,
+                    "fit_rows": fit_rows,
+                    "lin_standardise": "FriedScale 0.4*l/std(l), "
+                                       "winsorized at the 2.5% quantiles"})
+    else:
+        cfg.update({"xgb_params": {k: v for k, v in best_params.items()
+                                   if k != "monotone_constraints"},
+                    "num_boost_round": nbr, "n_trials": n_trials, "penalty": penalty,
+                    "gain_threshold": gain_threshold,
+                    "monotone": "+1 all features"})
+    write_report(module, out_dir, cfg, metrics, dims, rule_df, fit_info)
     with open(os.path.join(out_dir, "metrics.json"), "w") as fh:
         json.dump({"module": module, "metrics": metrics, "dims": dims,
-                   "config": cfg}, fh, indent=2, default=str)
-    return {"module": module, "metrics": metrics, "dims": dims}
+                   "config": cfg, "fit": fit_info}, fh, indent=2, default=str)
+    return {"module": module, "metrics": metrics, "dims": dims, "config": cfg}
 
 
 # ===========================================================================
@@ -1029,7 +1179,10 @@ def reconstruct_aqcore(ts_dir: str, modules=MODULES, win_size: int = 1) -> dict:
 
 
 def write_top_report(ts_dir: str, results: list[dict], recon: dict) -> None:
-    lines = ["# X-OPM RuleFit -- run summary", "",
+    backends = sorted({r.get("config", {}).get("backend", "rulefit")
+                       for r in results}) or ["rulefit"]
+    label = "/".join(BACKEND_LABEL.get(b, b) for b in backends)
+    lines = [f"# X-OPM {label} -- run summary", "",
              f"Generated: {os.path.basename(ts_dir)}", "",
              "## Per-module metrics", "",
              "| module | features | train R2 | val R2 | test R2 | test MAPE% | test RMSE |",
@@ -1104,7 +1257,20 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--n-trials", type=int, default=30)
     ap.add_argument("--gain-threshold", type=float, default=0.0)
-    ap.add_argument("--penalty", choices=["l1", "elasticnet"], default="l1")
+    ap.add_argument("--penalty", choices=["l1", "elasticnet"], default="l1",
+                    help="RuleFit linear-stage penalty (--model rulefit only)")
+    ap.add_argument("--model", choices=["rulefit", "elasticnet"], default="rulefit",
+                    help="rulefit = XGBoost-DART -> RuleFit (default); elasticnet = a "
+                         "plain ElasticNetCV over the features, no trees and no rules "
+                         "(--n-trials/--penalty/--gain-threshold/--max-rules/"
+                         "--hpo-rows then do not apply, and no rule/SHAP/H artifacts "
+                         "are written)")
+    ap.add_argument("--l1-ratio", default=",".join(str(v) for v in DEFAULT_L1_RATIOS),
+                    help="--model elasticnet: comma-separated l1_ratio grid, "
+                         "cross-validated alongside alpha (each in (0, 1])")
+    ap.add_argument("--allow-negative-coef", action="store_true",
+                    help="--model elasticnet: drop the non-negativity constraint "
+                         "(default: positive coefficients only, as in RuleFit)")
     ap.add_argument("--val-fraction", type=float, default=0.2)
     ap.add_argument("--max-rules", type=int, default=DEFAULT_MAX_RULES)
     ap.add_argument("--fit-rows", type=int, default=DEFAULT_FIT_ROWS,
@@ -1153,6 +1319,13 @@ def main(argv: list[str] | None = None) -> None:
             ap.error("--categories was given but empty after parsing")
         categories = cats
 
+    try:
+        l1_ratios = tuple(float(v) for v in args.l1_ratio.split(",") if v.strip())
+    except ValueError:
+        ap.error(f"--l1-ratio must be comma-separated floats, got {args.l1_ratio!r}")
+    if args.model == "elasticnet" and not l1_ratios:
+        ap.error("--l1-ratio is empty; give at least one value in (0, 1]")
+
     if args.reconstruct_only:
         if not args.outdir:
             ap.error("--reconstruct-only requires --outdir")
@@ -1187,7 +1360,8 @@ def main(argv: list[str] | None = None) -> None:
                 use_selection=not args.no_selection, max_rules=args.max_rules,
                 fit_rows=args.fit_rows, hpo_rows=args.hpo_rows,
                 rand_max_rows=args.rand_max_rows, win_size=args.win_size,
-                categories=categories))
+                categories=categories, model=args.model, l1_ratios=l1_ratios,
+                positive=not args.allow_negative_coef))
         except Exception as e:                                    # noqa: BLE001
             log.exception("module %s failed: %s", m, e)
 

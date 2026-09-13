@@ -9,6 +9,15 @@
 #
 # 4 win_sizes x 8 modules = 32 jobs. Pick THREADS with your core budget in mind:
 # 32 jobs x THREADS cores each = total cores. Override THREADS to change the budget.
+#
+# WINS overrides the window sweep and EXTRA_ARGS is appended to every model_regression
+# invocation, so one window with another backend is just:
+#
+#   WINS=4 EXTRA_ARGS="--model elasticnet" OUTDIR=analysis/x-opm/<ts>-enet \
+#     bash src/xopm_lib/run_all_parallel.sh
+#
+# A non-empty OUTDIR is refused unless FORCE=1, so pointing it at a finished run
+# cannot silently delete that run.
 set -uo pipefail
 
 PY="${PY:-$HOME/anaconda3/bin/python}"
@@ -18,8 +27,13 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO"
 
 MODULES=(cp0 idu ifu iu lsu rtu vidu vpu)
-WINS=(1 8 32 64 128)
+read -ra WINS <<< "${WINS:-1 8 32 64 128}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 TS="${OUTDIR:-analysis/x-opm/$(date +%Y-%m-%d-%H-%M)}"
+if [[ -d "$TS" && -n "$(ls -A "$TS" 2>/dev/null)" && "${FORCE:-0}" != 1 ]]; then
+  echo "[driver] refusing to wipe non-empty $TS (set FORCE=1 to override)" >&2
+  exit 1
+fi
 rm -rf "$TS"; mkdir -p "$TS"
 
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$TS/.mpl}"; mkdir -p "$MPLCONFIGDIR"
@@ -36,9 +50,11 @@ declare -a PIDS JOBS
 for w in "${WINS[@]}"; do
   WDIR="$TS/win${w}"; mkdir -p "$WDIR"
   for m in "${MODULES[@]}"; do
+    # EXTRA_ARGS is intentionally unquoted: it carries several flags.
+    # shellcheck disable=SC2086
     "$PY" src/xopm_lib/model_regression.py --module "$m" --outdir "$WDIR" \
           --win-size "$w" --no-clean --no-reconstruct --n-trials "$NTRIALS" \
-          > "$WDIR/${m}.log" 2>&1 &
+          $EXTRA_ARGS > "$WDIR/${m}.log" 2>&1 &
     PIDS+=("$!"); JOBS+=("win${w}/${m}")
     echo "[driver] launched win${w}/${m} (pid $!)"
   done
